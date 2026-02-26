@@ -10,6 +10,7 @@ import Apps from "./pages/Apps";
 import Network from "./pages/Network";
 import Infrastructure from "./pages/Infrastructure";
 import Data from "./pages/Data";
+import Trends from "./pages/Trends";
 
 export const router = createHashRouter([
     {
@@ -43,6 +44,10 @@ export const router = createHashRouter([
             {
                 path: "data",
                 element: <Data />,
+            },
+            {
+                path: "trends",
+                element: <Trends />,
             },
         ],
     },

@@ -1,0 +1,452 @@
+[
+    {
+        "runDate": "2025-07-01",
+        "initiatives": [
+            {
+                "id": "init-001",
+                "name": "Azure Security Benchmark",
+                "type": "builtin",
+                "assignmentId": "assign-001",
+                "subscriptionId": "sub-001",
+                "compliantCount": 120,
+                "nonCompliantCount": 35,
+                "exemptCount": 5,
+                "totalPolicies": 45,
+                "resources": [
+                    {
+                        "resourceId": "res-001",
+                        "resourceName": "vm-web-01",
+                        "resourceType": "Microsoft.Compute/virtualMachines",
+                        "resourceGroup": "rg-web",
+                        "subscriptionId": "sub-001",
+                        "state": "NonCompliant",
+                        "failingPolicies": [
+                            {
+                                "id": "pol-001",
+                                "name": "Disk Encryption Required",
+                                "description": "All managed disks must be encrypted"
+                            }
+                        ]
+                    },
+                    {
+                        "resourceId": "res-002",
+                        "resourceName": "sql-db-prod",
+                        "resourceType": "Microsoft.Sql/servers",
+                        "resourceGroup": "rg-data",
+                        "subscriptionId": "sub-001",
+                        "state": "Compliant",
+                        "failingPolicies": []
+                    },
+                    {
+                        "resourceId": "res-003",
+                        "resourceName": "storage-logs",
+                        "resourceType": "Microsoft.Storage/storageAccounts",
+                        "resourceGroup": "rg-data",
+                        "subscriptionId": "sub-001",
+                        "state": "NonCompliant",
+                        "failingPolicies": [
+                            {
+                                "id": "pol-002",
+                                "name": "HTTPS Only",
+                                "description": "Storage accounts must require HTTPS"
+                            }
+                        ]
+                    }
+                ]
+            },
+            {
+                "id": "init-002",
+                "name": "CIS Benchmark v1.4",
+                "type": "custom",
+                "assignmentId": "assign-002",
+                "subscriptionId": "sub-001",
+                "compliantCount": 80,
+                "nonCompliantCount": 20,
+                "exemptCount": 3,
+                "totalPolicies": 30,
+                "resources": [
+                    {
+                        "resourceId": "res-004",
+                        "resourceName": "aks-cluster-01",
+                        "resourceType": "Microsoft.ContainerService/managedClusters",
+                        "resourceGroup": "rg-compute",
+                        "subscriptionId": "sub-001",
+                        "state": "NonCompliant",
+                        "failingPolicies": [
+                            {
+                                "id": "pol-003",
+                                "name": "RBAC Enabled",
+                                "description": "AKS clusters must have RBAC enabled"
+                            }
+                        ]
+                    }
+                ]
+            }
+        ]
+    },
+    {
+        "runDate": "2025-08-01",
+        "initiatives": [
+            {
+                "id": "init-001",
+                "name": "Azure Security Benchmark",
+                "type": "builtin",
+                "assignmentId": "assign-001",
+                "subscriptionId": "sub-001",
+                "compliantCount": 130,
+                "nonCompliantCount": 28,
+                "exemptCount": 5,
+                "totalPolicies": 45,
+                "resources": [
+                    {
+                        "resourceId": "res-001",
+                        "resourceName": "vm-web-01",
+                        "resourceType": "Microsoft.Compute/virtualMachines",
+                        "resourceGroup": "rg-web",
+                        "subscriptionId": "sub-001",
+                        "state": "NonCompliant",
+                        "failingPolicies": [
+                            {
+                                "id": "pol-001",
+                                "name": "Disk Encryption Required",
+                                "description": "All managed disks must be encrypted"
+                            }
+                        ]
+                    },
+                    {
+                        "resourceId": "res-002",
+                        "resourceName": "sql-db-prod",
+                        "resourceType": "Microsoft.Sql/servers",
+                        "resourceGroup": "rg-data",
+                        "subscriptionId": "sub-001",
+                        "state": "Compliant",
+                        "failingPolicies": []
+                    },
+                    {
+                        "resourceId": "res-003",
+                        "resourceName": "storage-logs",
+                        "resourceType": "Microsoft.Storage/storageAccounts",
+                        "resourceGroup": "rg-data",
+                        "subscriptionId": "sub-001",
+                        "state": "Compliant",
+                        "failingPolicies": []
+                    }
+                ]
+            },
+            {
+                "id": "init-002",
+                "name": "CIS Benchmark v1.4",
+                "type": "custom",
+                "assignmentId": "assign-002",
+                "subscriptionId": "sub-001",
+                "compliantCount": 88,
+                "nonCompliantCount": 12,
+                "exemptCount": 3,
+                "totalPolicies": 30,
+                "resources": [
+                    {
+                        "resourceId": "res-004",
+                        "resourceName": "aks-cluster-01",
+                        "resourceType": "Microsoft.ContainerService/managedClusters",
+                        "resourceGroup": "rg-compute",
+                        "subscriptionId": "sub-001",
+                        "state": "Compliant",
+                        "failingPolicies": []
+                    }
+                ]
+            }
+        ]
+    },
+    {
+        "runDate": "2025-09-01",
+        "initiatives": [
+            {
+                "id": "init-001",
+                "name": "Azure Security Benchmark",
+                "type": "builtin",
+                "assignmentId": "assign-001",
+                "subscriptionId": "sub-001",
+                "compliantCount": 138,
+                "nonCompliantCount": 20,
+                "exemptCount": 5,
+                "totalPolicies": 45,
+                "resources": [
+                    {
+                        "resourceId": "res-001",
+                        "resourceName": "vm-web-01",
+                        "resourceType": "Microsoft.Compute/virtualMachines",
+                        "resourceGroup": "rg-web",
+                        "subscriptionId": "sub-001",
+                        "state": "Compliant",
+                        "failingPolicies": []
+                    },
+                    {
+                        "resourceId": "res-002",
+                        "resourceName": "sql-db-prod",
+                        "resourceType": "Microsoft.Sql/servers",
+                        "resourceGroup": "rg-data",
+                        "subscriptionId": "sub-001",
+                        "state": "Compliant",
+                        "failingPolicies": []
+                    },
+                    {
+                        "resourceId": "res-003",
+                        "resourceName": "storage-logs",
+                        "resourceType": "Microsoft.Storage/storageAccounts",
+                        "resourceGroup": "rg-data",
+                        "subscriptionId": "sub-001",
+                        "state": "Compliant",
+                        "failingPolicies": []
+                    }
+                ]
+            },
+            {
+                "id": "init-002",
+                "name": "CIS Benchmark v1.4",
+                "type": "custom",
+                "assignmentId": "assign-002",
+                "subscriptionId": "sub-001",
+                "compliantCount": 92,
+                "nonCompliantCount": 8,
+                "exemptCount": 3,
+                "totalPolicies": 30,
+                "resources": [
+                    {
+                        "resourceId": "res-004",
+                        "resourceName": "aks-cluster-01",
+                        "resourceType": "Microsoft.ContainerService/managedClusters",
+                        "resourceGroup": "rg-compute",
+                        "subscriptionId": "sub-001",
+                        "state": "Compliant",
+                        "failingPolicies": []
+                    }
+                ]
+            }
+        ]
+    },
+    {
+        "runDate": "2025-10-01",
+        "initiatives": [
+            {
+                "id": "init-001",
+                "name": "Azure Security Benchmark",
+                "type": "builtin",
+                "assignmentId": "assign-001",
+                "subscriptionId": "sub-001",
+                "compliantCount": 142,
+                "nonCompliantCount": 16,
+                "exemptCount": 5,
+                "totalPolicies": 45,
+                "resources": [
+                    {
+                        "resourceId": "res-001",
+                        "resourceName": "vm-web-01",
+                        "resourceType": "Microsoft.Compute/virtualMachines",
+                        "resourceGroup": "rg-web",
+                        "subscriptionId": "sub-001",
+                        "state": "Compliant",
+                        "failingPolicies": []
+                    },
+                    {
+                        "resourceId": "res-002",
+                        "resourceName": "sql-db-prod",
+                        "resourceType": "Microsoft.Sql/servers",
+                        "resourceGroup": "rg-data",
+                        "subscriptionId": "sub-001",
+                        "state": "Compliant",
+                        "failingPolicies": []
+                    },
+                    {
+                        "resourceId": "res-003",
+                        "resourceName": "storage-logs",
+                        "resourceType": "Microsoft.Storage/storageAccounts",
+                        "resourceGroup": "rg-data",
+                        "subscriptionId": "sub-001",
+                        "state": "Compliant",
+                        "failingPolicies": []
+                    }
+                ]
+            },
+            {
+                "id": "init-002",
+                "name": "CIS Benchmark v1.4",
+                "type": "custom",
+                "assignmentId": "assign-002",
+                "subscriptionId": "sub-001",
+                "compliantCount": 95,
+                "nonCompliantCount": 5,
+                "exemptCount": 3,
+                "totalPolicies": 30,
+                "resources": [
+                    {
+                        "resourceId": "res-004",
+                        "resourceName": "aks-cluster-01",
+                        "resourceType": "Microsoft.ContainerService/managedClusters",
+                        "resourceGroup": "rg-compute",
+                        "subscriptionId": "sub-001",
+                        "state": "Compliant",
+                        "failingPolicies": []
+                    }
+                ]
+            }
+        ]
+    },
+    {
+        "runDate": "2025-11-01",
+        "initiatives": [
+            {
+                "id": "init-001",
+                "name": "Azure Security Benchmark",
+                "type": "builtin",
+                "assignmentId": "assign-001",
+                "subscriptionId": "sub-001",
+                "compliantCount": 125,
+                "nonCompliantCount": 30,
+                "exemptCount": 8,
+                "totalPolicies": 45,
+                "resources": [
+                    {
+                        "resourceId": "res-001",
+                        "resourceName": "vm-web-01",
+                        "resourceType": "Microsoft.Compute/virtualMachines",
+                        "resourceGroup": "rg-web",
+                        "subscriptionId": "sub-001",
+                        "state": "NonCompliant",
+                        "failingPolicies": [
+                            {
+                                "id": "pol-001",
+                                "name": "Disk Encryption Required",
+                                "description": "All managed disks must be encrypted"
+                            }
+                        ]
+                    },
+                    {
+                        "resourceId": "res-002",
+                        "resourceName": "sql-db-prod",
+                        "resourceType": "Microsoft.Sql/servers",
+                        "resourceGroup": "rg-data",
+                        "subscriptionId": "sub-001",
+                        "state": "NonCompliant",
+                        "failingPolicies": [
+                            {
+                                "id": "pol-004",
+                                "name": "TLS 1.2 Required",
+                                "description": "SQL servers must use TLS 1.2"
+                            }
+                        ]
+                    },
+                    {
+                        "resourceId": "res-003",
+                        "resourceName": "storage-logs",
+                        "resourceType": "Microsoft.Storage/storageAccounts",
+                        "resourceGroup": "rg-data",
+                        "subscriptionId": "sub-001",
+                        "state": "NonCompliant",
+                        "failingPolicies": [
+                            {
+                                "id": "pol-002",
+                                "name": "HTTPS Only",
+                                "description": "Storage accounts must require HTTPS"
+                            }
+                        ]
+                    }
+                ]
+            },
+            {
+                "id": "init-002",
+                "name": "CIS Benchmark v1.4",
+                "type": "custom",
+                "assignmentId": "assign-002",
+                "subscriptionId": "sub-001",
+                "compliantCount": 85,
+                "nonCompliantCount": 15,
+                "exemptCount": 3,
+                "totalPolicies": 30,
+                "resources": [
+                    {
+                        "resourceId": "res-004",
+                        "resourceName": "aks-cluster-01",
+                        "resourceType": "Microsoft.ContainerService/managedClusters",
+                        "resourceGroup": "rg-compute",
+                        "subscriptionId": "sub-001",
+                        "state": "NonCompliant",
+                        "failingPolicies": [
+                            {
+                                "id": "pol-003",
+                                "name": "RBAC Enabled",
+                                "description": "AKS clusters must have RBAC enabled"
+                            }
+                        ]
+                    }
+                ]
+            }
+        ]
+    },
+    {
+        "runDate": "2025-12-01",
+        "initiatives": [
+            {
+                "id": "init-001",
+                "name": "Azure Security Benchmark",
+                "type": "builtin",
+                "assignmentId": "assign-001",
+                "subscriptionId": "sub-001",
+                "compliantCount": 148,
+                "nonCompliantCount": 12,
+                "exemptCount": 5,
+                "totalPolicies": 45,
+                "resources": [
+                    {
+                        "resourceId": "res-001",
+                        "resourceName": "vm-web-01",
+                        "resourceType": "Microsoft.Compute/virtualMachines",
+                        "resourceGroup": "rg-web",
+                        "subscriptionId": "sub-001",
+                        "state": "Compliant",
+                        "failingPolicies": []
+                    },
+                    {
+                        "resourceId": "res-002",
+                        "resourceName": "sql-db-prod",
+                        "resourceType": "Microsoft.Sql/servers",
+                        "resourceGroup": "rg-data",
+                        "subscriptionId": "sub-001",
+                        "state": "Compliant",
+                        "failingPolicies": []
+                    },
+                    {
+                        "resourceId": "res-003",
+                        "resourceName": "storage-logs",
+                        "resourceType": "Microsoft.Storage/storageAccounts",
+                        "resourceGroup": "rg-data",
+                        "subscriptionId": "sub-001",
+                        "state": "Compliant",
+                        "failingPolicies": []
+                    }
+                ]
+            },
+            {
+                "id": "init-002",
+                "name": "CIS Benchmark v1.4",
+                "type": "custom",
+                "assignmentId": "assign-002",
+                "subscriptionId": "sub-001",
+                "compliantCount": 97,
+                "nonCompliantCount": 3,
+                "exemptCount": 3,
+                "totalPolicies": 30,
+                "resources": [
+                    {
+                        "resourceId": "res-004",
+                        "resourceName": "aks-cluster-01",
+                        "resourceType": "Microsoft.ContainerService/managedClusters",
+                        "resourceGroup": "rg-compute",
+                        "subscriptionId": "sub-001",
+                        "state": "Compliant",
+                        "failingPolicies": []
+                    }
+                ]
+            }
+        ]
+    }
+]

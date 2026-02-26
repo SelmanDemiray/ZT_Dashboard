@@ -1,0 +1,728 @@
+[
+    {
+        "runDate": "2025-07-01",
+        "rules": [
+            {
+                "id": "gov-001",
+                "name": "Patch Critical VMs",
+                "owner": "Security Team",
+                "ownerEmail": "security@contoso.com",
+                "dueDate": "2025-09-30",
+                "subscriptionId": "sub-001",
+                "status": "notStarted",
+                "completionPercentage": 0,
+                "linkedRecommendationIds": [
+                    "def-003"
+                ],
+                "linkedPolicyIds": [
+                    "pol-001"
+                ],
+                "description": "Apply critical patches to all production VMs",
+                "completionCriteria": [
+                    {
+                        "description": "Identify affected VMs",
+                        "completed": false
+                    },
+                    {
+                        "description": "Schedule maintenance window",
+                        "completed": false
+                    },
+                    {
+                        "description": "Apply patches",
+                        "completed": false
+                    }
+                ]
+            },
+            {
+                "id": "gov-002",
+                "name": "Enable Storage Encryption",
+                "owner": "Cloud Ops",
+                "ownerEmail": "cloudops@contoso.com",
+                "dueDate": "2025-10-15",
+                "subscriptionId": "sub-001",
+                "status": "notStarted",
+                "completionPercentage": 0,
+                "linkedRecommendationIds": [
+                    "def-002"
+                ],
+                "linkedPolicyIds": [
+                    "pol-002"
+                ],
+                "description": "Enable encryption on all storage accounts",
+                "completionCriteria": [
+                    {
+                        "description": "Audit storage accounts",
+                        "completed": false
+                    },
+                    {
+                        "description": "Enable encryption",
+                        "completed": false
+                    }
+                ]
+            },
+            {
+                "id": "gov-003",
+                "name": "SQL Auditing Rollout",
+                "owner": "DBA Team",
+                "ownerEmail": "dba@contoso.com",
+                "dueDate": "2025-11-30",
+                "subscriptionId": "sub-001",
+                "status": "notStarted",
+                "completionPercentage": 0,
+                "linkedRecommendationIds": [
+                    "def-005"
+                ],
+                "linkedPolicyIds": [],
+                "description": "Enable auditing on all SQL servers",
+                "completionCriteria": [
+                    {
+                        "description": "Configure audit policies",
+                        "completed": false
+                    },
+                    {
+                        "description": "Test audit logging",
+                        "completed": false
+                    },
+                    {
+                        "description": "Deploy to production",
+                        "completed": false
+                    }
+                ]
+            },
+            {
+                "id": "gov-004",
+                "name": "MFA Enforcement",
+                "owner": "Identity Team",
+                "ownerEmail": "identity@contoso.com",
+                "dueDate": "2025-08-31",
+                "subscriptionId": "sub-001",
+                "status": "inProgress",
+                "completionPercentage": 30,
+                "linkedRecommendationIds": [
+                    "def-001"
+                ],
+                "linkedPolicyIds": [],
+                "description": "Enforce MFA for all privileged accounts",
+                "completionCriteria": [
+                    {
+                        "description": "Identify privileged accounts",
+                        "completed": true
+                    },
+                    {
+                        "description": "Create CA policies",
+                        "completed": false
+                    },
+                    {
+                        "description": "Rollout and validate",
+                        "completed": false
+                    }
+                ]
+            }
+        ]
+    },
+    {
+        "runDate": "2025-08-01",
+        "rules": [
+            {
+                "id": "gov-001",
+                "name": "Patch Critical VMs",
+                "owner": "Security Team",
+                "ownerEmail": "security@contoso.com",
+                "dueDate": "2025-09-30",
+                "subscriptionId": "sub-001",
+                "status": "inProgress",
+                "completionPercentage": 33,
+                "linkedRecommendationIds": [
+                    "def-003"
+                ],
+                "linkedPolicyIds": [
+                    "pol-001"
+                ],
+                "description": "Apply critical patches to all production VMs",
+                "completionCriteria": [
+                    {
+                        "description": "Identify affected VMs",
+                        "completed": true
+                    },
+                    {
+                        "description": "Schedule maintenance window",
+                        "completed": false
+                    },
+                    {
+                        "description": "Apply patches",
+                        "completed": false
+                    }
+                ]
+            },
+            {
+                "id": "gov-002",
+                "name": "Enable Storage Encryption",
+                "owner": "Cloud Ops",
+                "ownerEmail": "cloudops@contoso.com",
+                "dueDate": "2025-10-15",
+                "subscriptionId": "sub-001",
+                "status": "inProgress",
+                "completionPercentage": 50,
+                "linkedRecommendationIds": [
+                    "def-002"
+                ],
+                "linkedPolicyIds": [
+                    "pol-002"
+                ],
+                "description": "Enable encryption on all storage accounts",
+                "completionCriteria": [
+                    {
+                        "description": "Audit storage accounts",
+                        "completed": true
+                    },
+                    {
+                        "description": "Enable encryption",
+                        "completed": false
+                    }
+                ]
+            },
+            {
+                "id": "gov-003",
+                "name": "SQL Auditing Rollout",
+                "owner": "DBA Team",
+                "ownerEmail": "dba@contoso.com",
+                "dueDate": "2025-11-30",
+                "subscriptionId": "sub-001",
+                "status": "notStarted",
+                "completionPercentage": 0,
+                "linkedRecommendationIds": [
+                    "def-005"
+                ],
+                "linkedPolicyIds": [],
+                "description": "Enable auditing on all SQL servers",
+                "completionCriteria": [
+                    {
+                        "description": "Configure audit policies",
+                        "completed": false
+                    },
+                    {
+                        "description": "Test audit logging",
+                        "completed": false
+                    },
+                    {
+                        "description": "Deploy to production",
+                        "completed": false
+                    }
+                ]
+            },
+            {
+                "id": "gov-004",
+                "name": "MFA Enforcement",
+                "owner": "Identity Team",
+                "ownerEmail": "identity@contoso.com",
+                "dueDate": "2025-08-31",
+                "subscriptionId": "sub-001",
+                "status": "inProgress",
+                "completionPercentage": 66,
+                "linkedRecommendationIds": [
+                    "def-001"
+                ],
+                "linkedPolicyIds": [],
+                "description": "Enforce MFA for all privileged accounts",
+                "completionCriteria": [
+                    {
+                        "description": "Identify privileged accounts",
+                        "completed": true
+                    },
+                    {
+                        "description": "Create CA policies",
+                        "completed": true
+                    },
+                    {
+                        "description": "Rollout and validate",
+                        "completed": false
+                    }
+                ]
+            }
+        ]
+    },
+    {
+        "runDate": "2025-09-01",
+        "rules": [
+            {
+                "id": "gov-001",
+                "name": "Patch Critical VMs",
+                "owner": "Security Team",
+                "ownerEmail": "security@contoso.com",
+                "dueDate": "2025-09-30",
+                "subscriptionId": "sub-001",
+                "status": "inProgress",
+                "completionPercentage": 66,
+                "linkedRecommendationIds": [
+                    "def-003"
+                ],
+                "linkedPolicyIds": [
+                    "pol-001"
+                ],
+                "description": "Apply critical patches to all production VMs",
+                "completionCriteria": [
+                    {
+                        "description": "Identify affected VMs",
+                        "completed": true
+                    },
+                    {
+                        "description": "Schedule maintenance window",
+                        "completed": true
+                    },
+                    {
+                        "description": "Apply patches",
+                        "completed": false
+                    }
+                ]
+            },
+            {
+                "id": "gov-002",
+                "name": "Enable Storage Encryption",
+                "owner": "Cloud Ops",
+                "ownerEmail": "cloudops@contoso.com",
+                "dueDate": "2025-10-15",
+                "subscriptionId": "sub-001",
+                "status": "completed",
+                "completionPercentage": 100,
+                "linkedRecommendationIds": [
+                    "def-002"
+                ],
+                "linkedPolicyIds": [
+                    "pol-002"
+                ],
+                "description": "Enable encryption on all storage accounts",
+                "completionCriteria": [
+                    {
+                        "description": "Audit storage accounts",
+                        "completed": true
+                    },
+                    {
+                        "description": "Enable encryption",
+                        "completed": true
+                    }
+                ]
+            },
+            {
+                "id": "gov-003",
+                "name": "SQL Auditing Rollout",
+                "owner": "DBA Team",
+                "ownerEmail": "dba@contoso.com",
+                "dueDate": "2025-11-30",
+                "subscriptionId": "sub-001",
+                "status": "inProgress",
+                "completionPercentage": 33,
+                "linkedRecommendationIds": [
+                    "def-005"
+                ],
+                "linkedPolicyIds": [],
+                "description": "Enable auditing on all SQL servers",
+                "completionCriteria": [
+                    {
+                        "description": "Configure audit policies",
+                        "completed": true
+                    },
+                    {
+                        "description": "Test audit logging",
+                        "completed": false
+                    },
+                    {
+                        "description": "Deploy to production",
+                        "completed": false
+                    }
+                ]
+            },
+            {
+                "id": "gov-004",
+                "name": "MFA Enforcement",
+                "owner": "Identity Team",
+                "ownerEmail": "identity@contoso.com",
+                "dueDate": "2025-08-31",
+                "subscriptionId": "sub-001",
+                "status": "completed",
+                "completionPercentage": 100,
+                "linkedRecommendationIds": [
+                    "def-001"
+                ],
+                "linkedPolicyIds": [],
+                "description": "Enforce MFA for all privileged accounts",
+                "completionCriteria": [
+                    {
+                        "description": "Identify privileged accounts",
+                        "completed": true
+                    },
+                    {
+                        "description": "Create CA policies",
+                        "completed": true
+                    },
+                    {
+                        "description": "Rollout and validate",
+                        "completed": true
+                    }
+                ]
+            }
+        ]
+    },
+    {
+        "runDate": "2025-10-01",
+        "rules": [
+            {
+                "id": "gov-001",
+                "name": "Patch Critical VMs",
+                "owner": "Security Team",
+                "ownerEmail": "security@contoso.com",
+                "dueDate": "2025-09-30",
+                "subscriptionId": "sub-001",
+                "status": "completed",
+                "completionPercentage": 100,
+                "linkedRecommendationIds": [
+                    "def-003"
+                ],
+                "linkedPolicyIds": [
+                    "pol-001"
+                ],
+                "description": "Apply critical patches to all production VMs",
+                "completionCriteria": [
+                    {
+                        "description": "Identify affected VMs",
+                        "completed": true
+                    },
+                    {
+                        "description": "Schedule maintenance window",
+                        "completed": true
+                    },
+                    {
+                        "description": "Apply patches",
+                        "completed": true
+                    }
+                ]
+            },
+            {
+                "id": "gov-002",
+                "name": "Enable Storage Encryption",
+                "owner": "Cloud Ops",
+                "ownerEmail": "cloudops@contoso.com",
+                "dueDate": "2025-10-15",
+                "subscriptionId": "sub-001",
+                "status": "completed",
+                "completionPercentage": 100,
+                "linkedRecommendationIds": [
+                    "def-002"
+                ],
+                "linkedPolicyIds": [
+                    "pol-002"
+                ],
+                "description": "Enable encryption on all storage accounts",
+                "completionCriteria": [
+                    {
+                        "description": "Audit storage accounts",
+                        "completed": true
+                    },
+                    {
+                        "description": "Enable encryption",
+                        "completed": true
+                    }
+                ]
+            },
+            {
+                "id": "gov-003",
+                "name": "SQL Auditing Rollout",
+                "owner": "DBA Team",
+                "ownerEmail": "dba@contoso.com",
+                "dueDate": "2025-11-30",
+                "subscriptionId": "sub-001",
+                "status": "inProgress",
+                "completionPercentage": 66,
+                "linkedRecommendationIds": [
+                    "def-005"
+                ],
+                "linkedPolicyIds": [],
+                "description": "Enable auditing on all SQL servers",
+                "completionCriteria": [
+                    {
+                        "description": "Configure audit policies",
+                        "completed": true
+                    },
+                    {
+                        "description": "Test audit logging",
+                        "completed": true
+                    },
+                    {
+                        "description": "Deploy to production",
+                        "completed": false
+                    }
+                ]
+            },
+            {
+                "id": "gov-004",
+                "name": "MFA Enforcement",
+                "owner": "Identity Team",
+                "ownerEmail": "identity@contoso.com",
+                "dueDate": "2025-08-31",
+                "subscriptionId": "sub-001",
+                "status": "completed",
+                "completionPercentage": 100,
+                "linkedRecommendationIds": [
+                    "def-001"
+                ],
+                "linkedPolicyIds": [],
+                "description": "Enforce MFA for all privileged accounts",
+                "completionCriteria": [
+                    {
+                        "description": "Identify privileged accounts",
+                        "completed": true
+                    },
+                    {
+                        "description": "Create CA policies",
+                        "completed": true
+                    },
+                    {
+                        "description": "Rollout and validate",
+                        "completed": true
+                    }
+                ]
+            }
+        ]
+    },
+    {
+        "runDate": "2025-11-01",
+        "rules": [
+            {
+                "id": "gov-001",
+                "name": "Patch Critical VMs",
+                "owner": "Security Team",
+                "ownerEmail": "security@contoso.com",
+                "dueDate": "2025-09-30",
+                "subscriptionId": "sub-001",
+                "status": "completed",
+                "completionPercentage": 100,
+                "linkedRecommendationIds": [
+                    "def-003"
+                ],
+                "linkedPolicyIds": [
+                    "pol-001"
+                ],
+                "description": "Apply critical patches to all production VMs",
+                "completionCriteria": [
+                    {
+                        "description": "Identify affected VMs",
+                        "completed": true
+                    },
+                    {
+                        "description": "Schedule maintenance window",
+                        "completed": true
+                    },
+                    {
+                        "description": "Apply patches",
+                        "completed": true
+                    }
+                ]
+            },
+            {
+                "id": "gov-002",
+                "name": "Enable Storage Encryption",
+                "owner": "Cloud Ops",
+                "ownerEmail": "cloudops@contoso.com",
+                "dueDate": "2025-10-15",
+                "subscriptionId": "sub-001",
+                "status": "completed",
+                "completionPercentage": 100,
+                "linkedRecommendationIds": [
+                    "def-002"
+                ],
+                "linkedPolicyIds": [
+                    "pol-002"
+                ],
+                "description": "Enable encryption on all storage accounts",
+                "completionCriteria": [
+                    {
+                        "description": "Audit storage accounts",
+                        "completed": true
+                    },
+                    {
+                        "description": "Enable encryption",
+                        "completed": true
+                    }
+                ]
+            },
+            {
+                "id": "gov-003",
+                "name": "SQL Auditing Rollout",
+                "owner": "DBA Team",
+                "ownerEmail": "dba@contoso.com",
+                "dueDate": "2025-11-30",
+                "subscriptionId": "sub-001",
+                "status": "overdue",
+                "completionPercentage": 66,
+                "linkedRecommendationIds": [
+                    "def-005"
+                ],
+                "linkedPolicyIds": [],
+                "description": "Enable auditing on all SQL servers",
+                "completionCriteria": [
+                    {
+                        "description": "Configure audit policies",
+                        "completed": true
+                    },
+                    {
+                        "description": "Test audit logging",
+                        "completed": true
+                    },
+                    {
+                        "description": "Deploy to production",
+                        "completed": false
+                    }
+                ]
+            },
+            {
+                "id": "gov-004",
+                "name": "MFA Enforcement",
+                "owner": "Identity Team",
+                "ownerEmail": "identity@contoso.com",
+                "dueDate": "2025-08-31",
+                "subscriptionId": "sub-001",
+                "status": "completed",
+                "completionPercentage": 100,
+                "linkedRecommendationIds": [
+                    "def-001"
+                ],
+                "linkedPolicyIds": [],
+                "description": "Enforce MFA for all privileged accounts",
+                "completionCriteria": [
+                    {
+                        "description": "Identify privileged accounts",
+                        "completed": true
+                    },
+                    {
+                        "description": "Create CA policies",
+                        "completed": true
+                    },
+                    {
+                        "description": "Rollout and validate",
+                        "completed": true
+                    }
+                ]
+            }
+        ]
+    },
+    {
+        "runDate": "2025-12-01",
+        "rules": [
+            {
+                "id": "gov-001",
+                "name": "Patch Critical VMs",
+                "owner": "Security Team",
+                "ownerEmail": "security@contoso.com",
+                "dueDate": "2025-09-30",
+                "subscriptionId": "sub-001",
+                "status": "completed",
+                "completionPercentage": 100,
+                "linkedRecommendationIds": [
+                    "def-003"
+                ],
+                "linkedPolicyIds": [
+                    "pol-001"
+                ],
+                "description": "Apply critical patches to all production VMs",
+                "completionCriteria": [
+                    {
+                        "description": "Identify affected VMs",
+                        "completed": true
+                    },
+                    {
+                        "description": "Schedule maintenance window",
+                        "completed": true
+                    },
+                    {
+                        "description": "Apply patches",
+                        "completed": true
+                    }
+                ]
+            },
+            {
+                "id": "gov-002",
+                "name": "Enable Storage Encryption",
+                "owner": "Cloud Ops",
+                "ownerEmail": "cloudops@contoso.com",
+                "dueDate": "2025-10-15",
+                "subscriptionId": "sub-001",
+                "status": "completed",
+                "completionPercentage": 100,
+                "linkedRecommendationIds": [
+                    "def-002"
+                ],
+                "linkedPolicyIds": [
+                    "pol-002"
+                ],
+                "description": "Enable encryption on all storage accounts",
+                "completionCriteria": [
+                    {
+                        "description": "Audit storage accounts",
+                        "completed": true
+                    },
+                    {
+                        "description": "Enable encryption",
+                        "completed": true
+                    }
+                ]
+            },
+            {
+                "id": "gov-003",
+                "name": "SQL Auditing Rollout",
+                "owner": "DBA Team",
+                "ownerEmail": "dba@contoso.com",
+                "dueDate": "2025-11-30",
+                "subscriptionId": "sub-001",
+                "status": "completed",
+                "completionPercentage": 100,
+                "linkedRecommendationIds": [
+                    "def-005"
+                ],
+                "linkedPolicyIds": [],
+                "description": "Enable auditing on all SQL servers",
+                "completionCriteria": [
+                    {
+                        "description": "Configure audit policies",
+                        "completed": true
+                    },
+                    {
+                        "description": "Test audit logging",
+                        "completed": true
+                    },
+                    {
+                        "description": "Deploy to production",
+                        "completed": true
+                    }
+                ]
+            },
+            {
+                "id": "gov-004",
+                "name": "MFA Enforcement",
+                "owner": "Identity Team",
+                "ownerEmail": "identity@contoso.com",
+                "dueDate": "2025-08-31",
+                "subscriptionId": "sub-001",
+                "status": "completed",
+                "completionPercentage": 100,
+                "linkedRecommendationIds": [
+                    "def-001"
+                ],
+                "linkedPolicyIds": [],
+                "description": "Enforce MFA for all privileged accounts",
+                "completionCriteria": [
+                    {
+                        "description": "Identify privileged accounts",
+                        "completed": true
+                    },
+                    {
+                        "description": "Create CA policies",
+                        "completed": true
+                    },
+                    {
+                        "description": "Rollout and validate",
+                        "completed": true
+                    }
+                ]
+            }
+        ]
+    }
+]

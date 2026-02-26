@@ -1,0 +1,28 @@
+﻿{
+  "tenantId": "tenant-001",
+  "tenantName": "Contoso Corp",
+  "runDate": "2025-11-01",
+  "overallScore": 63,
+  "pillars": [
+    { "name": "Identity", "score": 65, "totalChecks": 8, "passed": 5, "failed": 3 },
+    { "name": "Devices", "score": 66, "totalChecks": 8, "passed": 5, "failed": 3 },
+    { "name": "Apps", "score": 58, "totalChecks": 8, "passed": 5, "failed": 3 },
+    { "name": "Network", "score": 67, "totalChecks": 8, "passed": 5, "failed": 3 },
+    { "name": "Infrastructure", "score": 68, "totalChecks": 8, "passed": 5, "failed": 3 },
+    { "name": "Data", "score": 63, "totalChecks": 8, "passed": 5, "failed": 3 }
+  ],
+  "checks": [
+    { "id": "CHK-1", "name": "Check 1", "pillar": "Identity", "area": "Area-1", "status": "passed", "risk": "high", "description": "Check 1 desc", "remediation": "Fix 1", "learnMoreUrl": "https://learn.microsoft.com", "score": 10, "weight": 10 },
+    { "id": "CHK-2", "name": "Check 2", "pillar": "Devices", "area": "Area-2", "status": "passed", "risk": "high", "description": "Check 2 desc", "remediation": "Fix 2", "learnMoreUrl": "https://learn.microsoft.com", "score": 10, "weight": 10 },
+    { "id": "CHK-3", "name": "Check 3", "pillar": "Apps", "area": "Area-3", "status": "passed", "risk": "high", "description": "Check 3 desc", "remediation": "Fix 3", "learnMoreUrl": "https://learn.microsoft.com", "score": 10, "weight": 10 },
+    { "id": "CHK-4", "name": "Check 4", "pillar": "Network", "area": "Area-4", "status": "passed", "risk": "medium", "description": "Check 4 desc", "remediation": "Fix 4", "learnMoreUrl": "https://learn.microsoft.com", "score": 10, "weight": 10 },
+    { "id": "CHK-5", "name": "Check 5", "pillar": "Infrastructure", "area": "Area-5", "status": "passed", "risk": "medium", "description": "Check 5 desc", "remediation": "Fix 5", "learnMoreUrl": "https://learn.microsoft.com", "score": 10, "weight": 10 },
+    { "id": "CHK-6", "name": "Check 6", "pillar": "Data", "area": "Area-6", "status": "passed", "risk": "medium", "description": "Check 6 desc", "remediation": "Fix 6", "learnMoreUrl": "https://learn.microsoft.com", "score": 10, "weight": 10 },
+    { "id": "CHK-7", "name": "Check 7", "pillar": "Identity", "area": "Area-7", "status": "passed", "risk": "low", "description": "Check 7 desc", "remediation": "Fix 7", "learnMoreUrl": "https://learn.microsoft.com", "score": 10, "weight": 10 },
+    { "id": "CHK-8", "name": "Check 8", "pillar": "Devices", "area": "Area-8", "status": "passed", "risk": "low", "description": "Check 8 desc", "remediation": "Fix 8", "learnMoreUrl": "https://learn.microsoft.com", "score": 10, "weight": 10 },
+    { "id": "CHK-9", "name": "Check 9", "pillar": "Apps", "area": "Area-9", "status": "passed", "risk": "low", "description": "Check 9 desc", "remediation": "Fix 9", "learnMoreUrl": "https://learn.microsoft.com", "score": 10, "weight": 10 },
+    { "id": "CHK-10", "name": "Check 10", "pillar": "Network", "area": "Area-10", "status": "passed", "risk": "low", "description": "Check 10 desc", "remediation": "Fix 10", "learnMoreUrl": "https://learn.microsoft.com", "score": 10, "weight": 10 },
+    { "id": "CHK-11", "name": "Check 11", "pillar": "Infrastructure", "area": "Area-11", "status": "passed", "risk": "low", "description": "Check 11 desc", "remediation": "Fix 11", "learnMoreUrl": "https://learn.microsoft.com", "score": 10, "weight": 10 },
+    { "id": "CHK-12", "name": "Check 12", "pillar": "Data", "area": "Area-12", "status": "passed", "risk": "low", "description": "Check 12 desc", "remediation": "Fix 12", "learnMoreUrl": "https://learn.microsoft.com", "score": 10, "weight": 10 }
+  ]
+}

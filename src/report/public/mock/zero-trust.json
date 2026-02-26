@@ -1,0 +1,626 @@
+[
+    {
+        "tenantId": "tenant-001",
+        "tenantName": "Contoso Corp",
+        "runDate": "2025-07-01",
+        "overallScore": 58,
+        "pillars": [
+            {
+                "name": "Identity",
+                "score": 65,
+                "totalChecks": 20,
+                "passed": 13,
+                "failed": 7
+            },
+            {
+                "name": "Devices",
+                "score": 52,
+                "totalChecks": 18,
+                "passed": 9,
+                "failed": 9
+            },
+            {
+                "name": "Applications",
+                "score": 60,
+                "totalChecks": 15,
+                "passed": 9,
+                "failed": 6
+            },
+            {
+                "name": "Data",
+                "score": 48,
+                "totalChecks": 12,
+                "passed": 6,
+                "failed": 6
+            },
+            {
+                "name": "Infrastructure",
+                "score": 55,
+                "totalChecks": 16,
+                "passed": 9,
+                "failed": 7
+            },
+            {
+                "name": "Network",
+                "score": 62,
+                "totalChecks": 14,
+                "passed": 9,
+                "failed": 5
+            }
+        ],
+        "checks": [
+            {
+                "id": "ZT-ID-001",
+                "name": "MFA Enforced for All Users",
+                "pillar": "Identity",
+                "area": "Authentication",
+                "status": "passed",
+                "risk": "high",
+                "description": "Ensure MFA is enforced for all users",
+                "remediation": "Enable MFA via Conditional Access",
+                "learnMoreUrl": "https://learn.microsoft.com/entra/identity/authentication/concept-mfa-howitworks",
+                "score": 10,
+                "weight": 3
+            },
+            {
+                "id": "ZT-ID-002",
+                "name": "Legacy Auth Blocked",
+                "pillar": "Identity",
+                "area": "Authentication",
+                "status": "failed",
+                "risk": "high",
+                "description": "Block legacy authentication protocols",
+                "remediation": "Create a CA policy to block legacy auth",
+                "learnMoreUrl": "https://learn.microsoft.com/entra/identity/conditional-access/block-legacy-authentication",
+                "score": 0,
+                "weight": 3
+            },
+            {
+                "id": "ZT-DV-001",
+                "name": "Device Compliance Required",
+                "pillar": "Devices",
+                "area": "Compliance",
+                "status": "failed",
+                "risk": "medium",
+                "description": "Require device compliance for access",
+                "remediation": "Configure Intune compliance policies",
+                "learnMoreUrl": "https://learn.microsoft.com/mem/intune/protect/device-compliance-get-started",
+                "score": 0,
+                "weight": 2
+            },
+            {
+                "id": "ZT-NW-001",
+                "name": "Network Segmentation",
+                "pillar": "Network",
+                "area": "Segmentation",
+                "status": "passed",
+                "risk": "medium",
+                "description": "Implement network segmentation",
+                "remediation": "Use NSGs and Azure Firewall",
+                "learnMoreUrl": "https://learn.microsoft.com/azure/networking/",
+                "score": 8,
+                "weight": 2
+            }
+        ]
+    },
+    {
+        "tenantId": "tenant-001",
+        "tenantName": "Contoso Corp",
+        "runDate": "2025-08-01",
+        "overallScore": 63,
+        "pillars": [
+            {
+                "name": "Identity",
+                "score": 70,
+                "totalChecks": 20,
+                "passed": 14,
+                "failed": 6
+            },
+            {
+                "name": "Devices",
+                "score": 56,
+                "totalChecks": 18,
+                "passed": 10,
+                "failed": 8
+            },
+            {
+                "name": "Applications",
+                "score": 64,
+                "totalChecks": 15,
+                "passed": 10,
+                "failed": 5
+            },
+            {
+                "name": "Data",
+                "score": 55,
+                "totalChecks": 12,
+                "passed": 7,
+                "failed": 5
+            },
+            {
+                "name": "Infrastructure",
+                "score": 60,
+                "totalChecks": 16,
+                "passed": 10,
+                "failed": 6
+            },
+            {
+                "name": "Network",
+                "score": 65,
+                "totalChecks": 14,
+                "passed": 9,
+                "failed": 5
+            }
+        ],
+        "checks": [
+            {
+                "id": "ZT-ID-001",
+                "name": "MFA Enforced for All Users",
+                "pillar": "Identity",
+                "area": "Authentication",
+                "status": "passed",
+                "risk": "high",
+                "description": "Ensure MFA is enforced for all users",
+                "remediation": "Enable MFA via Conditional Access",
+                "learnMoreUrl": "https://learn.microsoft.com/entra/identity/authentication/concept-mfa-howitworks",
+                "score": 10,
+                "weight": 3
+            },
+            {
+                "id": "ZT-ID-002",
+                "name": "Legacy Auth Blocked",
+                "pillar": "Identity",
+                "area": "Authentication",
+                "status": "passed",
+                "risk": "high",
+                "description": "Block legacy authentication protocols",
+                "remediation": "Create a CA policy to block legacy auth",
+                "learnMoreUrl": "https://learn.microsoft.com/entra/identity/conditional-access/block-legacy-authentication",
+                "score": 10,
+                "weight": 3
+            },
+            {
+                "id": "ZT-DV-001",
+                "name": "Device Compliance Required",
+                "pillar": "Devices",
+                "area": "Compliance",
+                "status": "failed",
+                "risk": "medium",
+                "description": "Require device compliance for access",
+                "remediation": "Configure Intune compliance policies",
+                "learnMoreUrl": "https://learn.microsoft.com/mem/intune/protect/device-compliance-get-started",
+                "score": 0,
+                "weight": 2
+            },
+            {
+                "id": "ZT-NW-001",
+                "name": "Network Segmentation",
+                "pillar": "Network",
+                "area": "Segmentation",
+                "status": "passed",
+                "risk": "medium",
+                "description": "Implement network segmentation",
+                "remediation": "Use NSGs and Azure Firewall",
+                "learnMoreUrl": "https://learn.microsoft.com/azure/networking/",
+                "score": 8,
+                "weight": 2
+            }
+        ]
+    },
+    {
+        "tenantId": "tenant-001",
+        "tenantName": "Contoso Corp",
+        "runDate": "2025-09-01",
+        "overallScore": 68,
+        "pillars": [
+            {
+                "name": "Identity",
+                "score": 75,
+                "totalChecks": 20,
+                "passed": 15,
+                "failed": 5
+            },
+            {
+                "name": "Devices",
+                "score": 61,
+                "totalChecks": 18,
+                "passed": 11,
+                "failed": 7
+            },
+            {
+                "name": "Applications",
+                "score": 67,
+                "totalChecks": 15,
+                "passed": 10,
+                "failed": 5
+            },
+            {
+                "name": "Data",
+                "score": 60,
+                "totalChecks": 12,
+                "passed": 7,
+                "failed": 5
+            },
+            {
+                "name": "Infrastructure",
+                "score": 65,
+                "totalChecks": 16,
+                "passed": 10,
+                "failed": 6
+            },
+            {
+                "name": "Network",
+                "score": 70,
+                "totalChecks": 14,
+                "passed": 10,
+                "failed": 4
+            }
+        ],
+        "checks": [
+            {
+                "id": "ZT-ID-001",
+                "name": "MFA Enforced for All Users",
+                "pillar": "Identity",
+                "area": "Authentication",
+                "status": "passed",
+                "risk": "high",
+                "description": "Ensure MFA is enforced for all users",
+                "remediation": "Enable MFA via Conditional Access",
+                "learnMoreUrl": "https://learn.microsoft.com/entra/identity/authentication/concept-mfa-howitworks",
+                "score": 10,
+                "weight": 3
+            },
+            {
+                "id": "ZT-ID-002",
+                "name": "Legacy Auth Blocked",
+                "pillar": "Identity",
+                "area": "Authentication",
+                "status": "passed",
+                "risk": "high",
+                "description": "Block legacy authentication protocols",
+                "remediation": "Create a CA policy to block legacy auth",
+                "learnMoreUrl": "https://learn.microsoft.com/entra/identity/conditional-access/block-legacy-authentication",
+                "score": 10,
+                "weight": 3
+            },
+            {
+                "id": "ZT-DV-001",
+                "name": "Device Compliance Required",
+                "pillar": "Devices",
+                "area": "Compliance",
+                "status": "investigate",
+                "risk": "medium",
+                "description": "Require device compliance for access",
+                "remediation": "Configure Intune compliance policies",
+                "learnMoreUrl": "https://learn.microsoft.com/mem/intune/protect/device-compliance-get-started",
+                "score": 5,
+                "weight": 2
+            },
+            {
+                "id": "ZT-NW-001",
+                "name": "Network Segmentation",
+                "pillar": "Network",
+                "area": "Segmentation",
+                "status": "passed",
+                "risk": "medium",
+                "description": "Implement network segmentation",
+                "remediation": "Use NSGs and Azure Firewall",
+                "learnMoreUrl": "https://learn.microsoft.com/azure/networking/",
+                "score": 8,
+                "weight": 2
+            }
+        ]
+    },
+    {
+        "tenantId": "tenant-001",
+        "tenantName": "Contoso Corp",
+        "runDate": "2025-10-01",
+        "overallScore": 72,
+        "pillars": [
+            {
+                "name": "Identity",
+                "score": 80,
+                "totalChecks": 20,
+                "passed": 16,
+                "failed": 4
+            },
+            {
+                "name": "Devices",
+                "score": 67,
+                "totalChecks": 18,
+                "passed": 12,
+                "failed": 6
+            },
+            {
+                "name": "Applications",
+                "score": 70,
+                "totalChecks": 15,
+                "passed": 11,
+                "failed": 4
+            },
+            {
+                "name": "Data",
+                "score": 65,
+                "totalChecks": 12,
+                "passed": 8,
+                "failed": 4
+            },
+            {
+                "name": "Infrastructure",
+                "score": 68,
+                "totalChecks": 16,
+                "passed": 11,
+                "failed": 5
+            },
+            {
+                "name": "Network",
+                "score": 72,
+                "totalChecks": 14,
+                "passed": 10,
+                "failed": 4
+            }
+        ],
+        "checks": [
+            {
+                "id": "ZT-ID-001",
+                "name": "MFA Enforced for All Users",
+                "pillar": "Identity",
+                "area": "Authentication",
+                "status": "passed",
+                "risk": "high",
+                "description": "Ensure MFA is enforced for all users",
+                "remediation": "Enable MFA via Conditional Access",
+                "learnMoreUrl": "https://learn.microsoft.com/entra/identity/authentication/concept-mfa-howitworks",
+                "score": 10,
+                "weight": 3
+            },
+            {
+                "id": "ZT-ID-002",
+                "name": "Legacy Auth Blocked",
+                "pillar": "Identity",
+                "area": "Authentication",
+                "status": "passed",
+                "risk": "high",
+                "description": "Block legacy authentication protocols",
+                "remediation": "Create a CA policy to block legacy auth",
+                "learnMoreUrl": "https://learn.microsoft.com/entra/identity/conditional-access/block-legacy-authentication",
+                "score": 10,
+                "weight": 3
+            },
+            {
+                "id": "ZT-DV-001",
+                "name": "Device Compliance Required",
+                "pillar": "Devices",
+                "area": "Compliance",
+                "status": "passed",
+                "risk": "medium",
+                "description": "Require device compliance for access",
+                "remediation": "Configure Intune compliance policies",
+                "learnMoreUrl": "https://learn.microsoft.com/mem/intune/protect/device-compliance-get-started",
+                "score": 8,
+                "weight": 2
+            },
+            {
+                "id": "ZT-NW-001",
+                "name": "Network Segmentation",
+                "pillar": "Network",
+                "area": "Segmentation",
+                "status": "passed",
+                "risk": "medium",
+                "description": "Implement network segmentation",
+                "remediation": "Use NSGs and Azure Firewall",
+                "learnMoreUrl": "https://learn.microsoft.com/azure/networking/",
+                "score": 8,
+                "weight": 2
+            }
+        ]
+    },
+    {
+        "tenantId": "tenant-001",
+        "tenantName": "Contoso Corp",
+        "runDate": "2025-11-01",
+        "overallScore": 65,
+        "pillars": [
+            {
+                "name": "Identity",
+                "score": 78,
+                "totalChecks": 20,
+                "passed": 16,
+                "failed": 4
+            },
+            {
+                "name": "Devices",
+                "score": 60,
+                "totalChecks": 18,
+                "passed": 11,
+                "failed": 7
+            },
+            {
+                "name": "Applications",
+                "score": 62,
+                "totalChecks": 15,
+                "passed": 9,
+                "failed": 6
+            },
+            {
+                "name": "Data",
+                "score": 55,
+                "totalChecks": 12,
+                "passed": 7,
+                "failed": 5
+            },
+            {
+                "name": "Infrastructure",
+                "score": 60,
+                "totalChecks": 16,
+                "passed": 10,
+                "failed": 6
+            },
+            {
+                "name": "Network",
+                "score": 68,
+                "totalChecks": 14,
+                "passed": 10,
+                "failed": 4
+            }
+        ],
+        "checks": [
+            {
+                "id": "ZT-ID-001",
+                "name": "MFA Enforced for All Users",
+                "pillar": "Identity",
+                "area": "Authentication",
+                "status": "passed",
+                "risk": "high",
+                "description": "Ensure MFA is enforced for all users",
+                "remediation": "Enable MFA via Conditional Access",
+                "learnMoreUrl": "https://learn.microsoft.com/entra/identity/authentication/concept-mfa-howitworks",
+                "score": 10,
+                "weight": 3
+            },
+            {
+                "id": "ZT-ID-002",
+                "name": "Legacy Auth Blocked",
+                "pillar": "Identity",
+                "area": "Authentication",
+                "status": "passed",
+                "risk": "high",
+                "description": "Block legacy authentication protocols",
+                "remediation": "Create a CA policy to block legacy auth",
+                "learnMoreUrl": "https://learn.microsoft.com/entra/identity/conditional-access/block-legacy-authentication",
+                "score": 10,
+                "weight": 3
+            },
+            {
+                "id": "ZT-DV-001",
+                "name": "Device Compliance Required",
+                "pillar": "Devices",
+                "area": "Compliance",
+                "status": "failed",
+                "risk": "medium",
+                "description": "Require device compliance for access",
+                "remediation": "Configure Intune compliance policies",
+                "learnMoreUrl": "https://learn.microsoft.com/mem/intune/protect/device-compliance-get-started",
+                "score": 0,
+                "weight": 2
+            },
+            {
+                "id": "ZT-NW-001",
+                "name": "Network Segmentation",
+                "pillar": "Network",
+                "area": "Segmentation",
+                "status": "passed",
+                "risk": "medium",
+                "description": "Implement network segmentation",
+                "remediation": "Use NSGs and Azure Firewall",
+                "learnMoreUrl": "https://learn.microsoft.com/azure/networking/",
+                "score": 8,
+                "weight": 2
+            }
+        ]
+    },
+    {
+        "tenantId": "tenant-001",
+        "tenantName": "Contoso Corp",
+        "runDate": "2025-12-01",
+        "overallScore": 74,
+        "pillars": [
+            {
+                "name": "Identity",
+                "score": 82,
+                "totalChecks": 20,
+                "passed": 17,
+                "failed": 3
+            },
+            {
+                "name": "Devices",
+                "score": 70,
+                "totalChecks": 18,
+                "passed": 13,
+                "failed": 5
+            },
+            {
+                "name": "Applications",
+                "score": 72,
+                "totalChecks": 15,
+                "passed": 11,
+                "failed": 4
+            },
+            {
+                "name": "Data",
+                "score": 67,
+                "totalChecks": 12,
+                "passed": 8,
+                "failed": 4
+            },
+            {
+                "name": "Infrastructure",
+                "score": 70,
+                "totalChecks": 16,
+                "passed": 11,
+                "failed": 5
+            },
+            {
+                "name": "Network",
+                "score": 75,
+                "totalChecks": 14,
+                "passed": 11,
+                "failed": 3
+            }
+        ],
+        "checks": [
+            {
+                "id": "ZT-ID-001",
+                "name": "MFA Enforced for All Users",
+                "pillar": "Identity",
+                "area": "Authentication",
+                "status": "passed",
+                "risk": "high",
+                "description": "Ensure MFA is enforced for all users",
+                "remediation": "Enable MFA via Conditional Access",
+                "learnMoreUrl": "https://learn.microsoft.com/entra/identity/authentication/concept-mfa-howitworks",
+                "score": 10,
+                "weight": 3
+            },
+            {
+                "id": "ZT-ID-002",
+                "name": "Legacy Auth Blocked",
+                "pillar": "Identity",
+                "area": "Authentication",
+                "status": "passed",
+                "risk": "high",
+                "description": "Block legacy authentication protocols",
+                "remediation": "Create a CA policy to block legacy auth",
+                "learnMoreUrl": "https://learn.microsoft.com/entra/identity/conditional-access/block-legacy-authentication",
+                "score": 10,
+                "weight": 3
+            },
+            {
+                "id": "ZT-DV-001",
+                "name": "Device Compliance Required",
+                "pillar": "Devices",
+                "area": "Compliance",
+                "status": "passed",
+                "risk": "medium",
+                "description": "Require device compliance for access",
+                "remediation": "Configure Intune compliance policies",
+                "learnMoreUrl": "https://learn.microsoft.com/mem/intune/protect/device-compliance-get-started",
+                "score": 8,
+                "weight": 2
+            },
+            {
+                "id": "ZT-NW-001",
+                "name": "Network Segmentation",
+                "pillar": "Network",
+                "area": "Segmentation",
+                "status": "passed",
+                "risk": "medium",
+                "description": "Implement network segmentation",
+                "remediation": "Use NSGs and Azure Firewall",
+                "learnMoreUrl": "https://learn.microsoft.com/azure/networking/",
+                "score": 8,
+                "weight": 2
+            }
+        ]
+    }
+]
