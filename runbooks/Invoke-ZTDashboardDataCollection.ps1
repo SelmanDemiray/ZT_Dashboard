@@ -15,7 +15,8 @@
       1. Azure Automation Account with a System-Assigned Managed Identity.
       2. Grant the Managed Identity:
          - "Global Reader" on Entra ID (for Invoke-ZtAssessment / MS Graph).
-         - "Reader" on every Azure subscription you want to assess.
+         - "Reader" on every Azure subscription in the tenant (the
+           runbook auto-discovers all accessible subscriptions).
          - "Storage Blob Data Contributor" on the storage account that
            hosts the $web container.
       3. Import these modules into the Automation Account (Runtime 7.2+):
@@ -31,7 +32,7 @@
          - SubscriptionId              (string)     Azure sub that holds the storage account
          - BlobContainerName           (string)     usually "$web"
          - TargetTenantId              (string)     Entra tenant to assess
-         - TargetSubscriptionIds       (string)     comma-separated subscription IDs to assess
+         (Subscriptions are auto-discovered — no manual list needed)
       5. Link this runbook to a Daily Schedule (06:00 AM your timezone).
 #>
 
@@ -59,12 +60,9 @@ $storageAccountRG      = Get-AutomationVariable -Name "StorageAccountResourceGro
 $azureSubscriptionId   = Get-AutomationVariable -Name "SubscriptionId"
 $containerName         = Get-AutomationVariable -Name "BlobContainerName"
 $targetTenantId        = Get-AutomationVariable -Name "TargetTenantId"
-$targetSubscriptionIds = (Get-AutomationVariable -Name "TargetSubscriptionIds") -split ',' |
-                         ForEach-Object { $_.Trim() } | Where-Object { $_ -ne '' }
 
 Write-Log "Storage: $storageAccountName / container: $containerName"
 Write-Log "Tenant:  $targetTenantId"
-Write-Log "Subscriptions to assess: $($targetSubscriptionIds -join ', ')"
 #endregion
 
 
@@ -75,6 +73,26 @@ Set-AzContext -SubscriptionId $azureSubscriptionId | Out-Null
 
 Write-Log "Connecting to Microsoft Graph with Managed Identity..."
 Connect-MgGraph -Identity -TenantId $targetTenantId -NoWelcome | Out-Null
+#endregion
+
+
+#region ── 2b. Auto-discover all subscriptions in the tenant ───────────────
+Write-Log "Auto-discovering subscriptions..."
+$allSubs = Get-AzSubscription -TenantId $targetTenantId -ErrorAction Stop |
+           Where-Object { $_.State -eq 'Enabled' }
+$targetSubscriptionIds = @($allSubs | ForEach-Object { $_.Id })
+
+if ($targetSubscriptionIds.Count -eq 0) {
+    throw "No enabled subscriptions found in tenant $targetTenantId. Check Managed Identity permissions."
+}
+
+Write-Log "Found $($targetSubscriptionIds.Count) subscriptions:"
+foreach ($s in $allSubs) {
+    Write-Log "  • $($s.Name) ($($s.Id))"
+}
+
+# Restore context to storage subscription
+Set-AzContext -SubscriptionId $azureSubscriptionId | Out-Null
 #endregion
 
 
