@@ -10,13 +10,9 @@ import type {
 const BLOB_BASE_URL = import.meta.env.VITE_BLOB_BASE_URL ?? '';
 const BLOB_SAS_TOKEN = import.meta.env.VITE_BLOB_SAS_TOKEN ?? '';
 
-function isDevMode(): boolean {
-    return !BLOB_BASE_URL;
-}
-
 function buildUrl(path: string): string {
-    if (isDevMode()) {
-        return `/mock/${path}`;
+    if (!BLOB_BASE_URL) {
+        throw new Error("VITE_BLOB_BASE_URL is not defined in the environment. Real data cannot be loaded.");
     }
     const separator = BLOB_SAS_TOKEN.startsWith('?') ? '' : '?';
     return `${BLOB_BASE_URL}/assessments/${path}${separator}${BLOB_SAS_TOKEN}`;
