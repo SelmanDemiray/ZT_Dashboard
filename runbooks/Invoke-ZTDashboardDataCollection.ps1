@@ -27,12 +27,14 @@
          - ZeroTrustAssessment  (from PSGallery)
          - PSFramework
       4. Create these Automation Variables (encrypted where noted):
-         - StorageAccountName          (string)     e.g. "ztdashboardsa"
-         - StorageAccountResourceGroup (string)     e.g. "rg-zt-dashboard"
-         - SubscriptionId              (string)     Azure sub that holds the storage account
-         - BlobContainerName           (string)     usually "$web"
+         - AuthMethod                  (string)     'AppRegistration' (preferred) or 'ManagedIdentity'
          - TargetTenantId              (string)     Entra tenant to assess
-         (Subscriptions are auto-discovered — no manual list needed)
+         - StorageAccountName          (string)     e.g. "ztdashboardsa"
+         - BlobContainerName           (string)     usually "$web"
+         (If AuthMethod is 'AppRegistration', also create):
+         - AppClientId                 (string)     Client ID of your Entra App
+         - AppClientSecret             (string)     Client Secret of your Entra App (ENCRYPTED)
+         (All Azure Subscriptions AND the Storage Account location are intelligently AUTO-DISCOVERED via Resource Graph)
       5. Link this runbook to a Daily Schedule (06:00 AM your timezone).
 #>
 
@@ -55,24 +57,42 @@ function Write-Log {
 #region ── 1. Read Automation Variables ────────────────────────────────────
 Write-Log "Reading Automation Variables..."
 
-$storageAccountName    = Get-AutomationVariable -Name "StorageAccountName"
-$storageAccountRG      = Get-AutomationVariable -Name "StorageAccountResourceGroup"
-$azureSubscriptionId   = Get-AutomationVariable -Name "SubscriptionId"
-$containerName         = Get-AutomationVariable -Name "BlobContainerName"
-$targetTenantId        = Get-AutomationVariable -Name "TargetTenantId"
+$authMethod          = Get-AutomationVariable -Name "AuthMethod" -ErrorAction SilentlyContinue
+if (-not $authMethod) { $authMethod = "AppRegistration" } # Default to AppReg
 
+$storageAccountName  = Get-AutomationVariable -Name "StorageAccountName"
+$containerName       = Get-AutomationVariable -Name "BlobContainerName"
+$targetTenantId      = Get-AutomationVariable -Name "TargetTenantId"
+
+Write-Log "Auth Method: $authMethod"
 Write-Log "Storage: $storageAccountName / container: $containerName"
 Write-Log "Tenant:  $targetTenantId"
 #endregion
 
 
-#region ── 2. Authenticate with Managed Identity ──────────────────────────
-Write-Log "Connecting to Azure with Managed Identity..."
-Connect-AzAccount -Identity | Out-Null
-Set-AzContext -SubscriptionId $azureSubscriptionId | Out-Null
+#region ── 2. Authenticate (Dual Support) ──────────────────────────────────
+if ($authMethod -eq 'ManagedIdentity') {
+    Write-Log "Connecting to Azure & Graph via System-Assigned Managed Identity..."
+    Connect-AzAccount -Identity | Out-Null
+    Connect-MgGraph -Identity -TenantId $targetTenantId -NoWelcome | Out-Null
+}
+elseif ($authMethod -eq 'AppRegistration') {
+    Write-Log "Connecting to Azure & Graph via App Registration..."
+    $appClientId     = Get-AutomationVariable -Name "AppClientId"
+    $appClientSecret = Get-AutomationVariable -Name "AppClientSecret"
 
-Write-Log "Connecting to Microsoft Graph with Managed Identity..."
-Connect-MgGraph -Identity -TenantId $targetTenantId -NoWelcome | Out-Null
+    $secureSecret = ConvertTo-SecureString $appClientSecret -AsPlainText -Force
+    $cred = New-Object System.Management.Automation.PSCredential($appClientId, $secureSecret)
+
+    # Azure RM App Registration connection
+    Connect-AzAccount -ServicePrincipal -Credential $cred -Tenant $targetTenantId | Out-Null
+
+    # Graph App Registration connection
+    Connect-MgGraph -ClientId $appClientId -TenantId $targetTenantId -ClientSecret $secureSecret -NoWelcome | Out-Null
+}
+else {
+    throw "Invalid AuthMethod variable. Use 'ManagedIdentity' or 'AppRegistration'."
+}
 #endregion
 
 
@@ -90,13 +110,27 @@ Write-Log "Found $($targetSubscriptionIds.Count) subscriptions:"
 foreach ($s in $allSubs) {
     Write-Log "  • $($s.Name) ($($s.Id))"
 }
-
-# Restore context to storage subscription
-Set-AzContext -SubscriptionId $azureSubscriptionId | Out-Null
 #endregion
 
 
-#region ── 3. Connect to Blob Storage ─────────────────────────────────────
+#region ── 3. Auto-discover Storage Account & Connect to Blob ─────────────
+Write-Log "Auto-discovering subscription & resource group for Storage Account '$storageAccountName'..."
+
+$storageAcctQuery = "Resources | where type =~ 'microsoft.storage/storageaccounts' and name =~ '$storageAccountName' | project subscriptionId, resourceGroup"
+$storageAcctResult = Search-AzGraph -Query $storageAcctQuery -First 1 -ErrorAction Stop
+
+if (-not $storageAcctResult -or $storageAcctResult.Data.Count -eq 0) {
+    throw "Could not find storage account '$storageAccountName' via Azure Resource Graph. Ensure Identity has Reader access to it."
+}
+
+$azureSubscriptionId = $storageAcctResult.Data[0].subscriptionId
+$storageAccountRG    = $storageAcctResult.Data[0].resourceGroup
+
+Write-Log "Found Storage Account in Subscription: $azureSubscriptionId (RG: $storageAccountRG)"
+
+# Set context to the discovered storage account subscription
+Set-AzContext -SubscriptionId $azureSubscriptionId | Out-Null
+
 Write-Log "Obtaining Storage context..."
 $storageAccount = Get-AzStorageAccount -ResourceGroupName $storageAccountRG -Name $storageAccountName
 $ctx = $storageAccount.Context
@@ -144,7 +178,7 @@ function Upload-JsonBlob {
             -ContentType "application/json" `
             -Context $StorageContext `
             -Force | Out-Null
-        Write-Log "  ✓ Uploaded: $BlobPath ($($bytes.Length) bytes)"
+        Write-Log "  [OK] Uploaded: $BlobPath ($($bytes.Length) bytes)"
     }
     finally {
         $ms.Dispose()
@@ -172,6 +206,7 @@ Write-Log "Full assessment report uploaded."
 foreach ($subId in $targetSubscriptionIds) {
     Write-Log "Processing subscription: $subId"
     $blobBasePath = "assessments/$targetTenantId/$subId/$today"
+    $blobLatestPath = "assessments/$targetTenantId/$subId/latest"
 
     #───────────────────────────────────────────────────────────────────
     # 7a. ZERO TRUST snapshot
@@ -245,6 +280,8 @@ foreach ($subId in $targetSubscriptionIds) {
 
     Upload-JsonBlob -BlobPath "$blobBasePath/zero-trust.json" `
                     -Data $ztSnapshot -StorageContext $ctx -Container $containerName
+    Upload-JsonBlob -BlobPath "$blobLatestPath/zero-trust.json" `
+                    -Data $ztSnapshot -StorageContext $ctx -Container $containerName
 
     #───────────────────────────────────────────────────────────────────
     # 7b. POLICY COMPLIANCE via Azure Resource Graph
@@ -297,7 +334,7 @@ PolicyResources
         }
     }
     catch {
-        Write-Log "  ⚠ Policy query failed: $($_.Exception.Message)" "WARN"
+        Write-Log "  [WARN] Policy query failed: $($_.Exception.Message)" "WARN"
     }
 
     # If no Resource Graph results, create a minimal entry from policy states
@@ -326,7 +363,7 @@ PolicyResources
             }
         }
         catch {
-            Write-Log "  ⚠ Policy states fallback failed: $($_.Exception.Message)" "WARN"
+            Write-Log "  [WARN] Policy states fallback failed: $($_.Exception.Message)" "WARN"
         }
     }
 
@@ -373,7 +410,7 @@ PolicyResources
             }
         }
         catch {
-            Write-Log "  ⚠ Non-compliant resources query failed: $($_.Exception.Message)" "WARN"
+            Write-Log "  [WARN] Non-compliant resources query failed: $($_.Exception.Message)" "WARN"
         }
     }
 
@@ -383,6 +420,8 @@ PolicyResources
     }
 
     Upload-JsonBlob -BlobPath "$blobBasePath/policy-compliance.json" `
+                    -Data $policyCompliance -StorageContext $ctx -Container $containerName
+    Upload-JsonBlob -BlobPath "$blobLatestPath/policy-compliance.json" `
                     -Data $policyCompliance -StorageContext $ctx -Container $containerName
 
     #───────────────────────────────────────────────────────────────────
@@ -427,7 +466,7 @@ PolicyResources
         Set-AzContext -SubscriptionId $azureSubscriptionId | Out-Null
     }
     catch {
-        Write-Log "  ⚠ Defender recommendations failed: $($_.Exception.Message)" "WARN"
+        Write-Log "  [WARN] Defender recommendations failed: $($_.Exception.Message)" "WARN"
         # Restore context
         Set-AzContext -SubscriptionId $azureSubscriptionId -ErrorAction SilentlyContinue | Out-Null
     }
@@ -438,6 +477,8 @@ PolicyResources
     }
 
     Upload-JsonBlob -BlobPath "$blobBasePath/defender-recs.json" `
+                    -Data $defenderRecs -StorageContext $ctx -Container $containerName
+    Upload-JsonBlob -BlobPath "$blobLatestPath/defender-recs.json" `
                     -Data $defenderRecs -StorageContext $ctx -Container $containerName
 
     #───────────────────────────────────────────────────────────────────
@@ -480,13 +521,13 @@ PolicyResources
             }
         }
         catch {
-            Write-Log "  ⚠ Governance rules API failed: $($_.Exception.Message)" "WARN"
+            Write-Log "  [WARN] Governance rules API failed: $($_.Exception.Message)" "WARN"
         }
 
         Set-AzContext -SubscriptionId $azureSubscriptionId | Out-Null
     }
     catch {
-        Write-Log "  ⚠ Governance data collection failed: $($_.Exception.Message)" "WARN"
+        Write-Log "  [WARN] Governance data collection failed: $($_.Exception.Message)" "WARN"
         Set-AzContext -SubscriptionId $azureSubscriptionId -ErrorAction SilentlyContinue | Out-Null
     }
 
@@ -496,6 +537,8 @@ PolicyResources
     }
 
     Upload-JsonBlob -BlobPath "$blobBasePath/governance.json" `
+                    -Data $governance -StorageContext $ctx -Container $containerName
+    Upload-JsonBlob -BlobPath "$blobLatestPath/governance.json" `
                     -Data $governance -StorageContext $ctx -Container $containerName
 
     Write-Log "  ✅ Subscription $subId complete."
@@ -517,10 +560,10 @@ try {
         -Force -ErrorAction Stop
     $existingJson = Get-Content (Join-Path $env:TEMP "tenant-index-existing.json") -Raw
     $existingIndex = $existingJson | ConvertFrom-Json
-    Write-Log "  Found existing tenant-index.json — merging dates."
+    Write-Log "  Found existing tenant-index.json - merging dates."
 }
 catch {
-    Write-Log "  No existing tenant-index.json — creating fresh."
+    Write-Log "  No existing tenant-index.json - creating fresh."
 }
 
 # Merge dates: keep last 90 days of history
@@ -536,7 +579,7 @@ foreach ($subId in $targetSubscriptionIds) {
         $subName = $azSub.Name
     }
     catch {
-        Write-Log "  ⚠ Could not get subscription name for $subId" "WARN"
+        Write-Log "  [WARN] Could not get subscription name for $subId" "WARN"
     }
 
     # Merge historical dates
@@ -560,7 +603,7 @@ foreach ($subId in $targetSubscriptionIds) {
         Set-AzContext -SubscriptionId $azureSubscriptionId | Out-Null
     }
     catch {
-        Write-Log "  ⚠ Could not list resource groups for $subId" "WARN"
+        Write-Log "  [WARN] Could not list resource groups for $subId" "WARN"
         Set-AzContext -SubscriptionId $azureSubscriptionId -ErrorAction SilentlyContinue | Out-Null
     }
 
@@ -610,7 +653,7 @@ try {
         -ContentType "application/javascript" `
         -Context $ctx `
         -Force | Out-Null
-    Write-Log "  ✓ Uploaded: config/report-data.js"
+    Write-Log "  [OK] Uploaded: config/report-data.js"
 }
 finally {
     $jsMs.Dispose()
@@ -627,7 +670,7 @@ if (Test-Path $reportPath) {
 Disconnect-MgGraph -ErrorAction SilentlyContinue | Out-Null
 
 Write-Log "═══════════════════════════════════════════════════════════"
-Write-Log "✅ Daily data collection complete!"
+Write-Log "[OK] Daily data collection complete!"
 Write-Log "   Date:           $today"
 Write-Log "   Tenant:         $($reportJson.TenantName) ($targetTenantId)"
 Write-Log "   Subscriptions:  $($targetSubscriptionIds.Count)"
