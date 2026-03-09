@@ -87,8 +87,8 @@ elseif ($authMethod -eq 'AppRegistration') {
     # Azure RM App Registration connection
     Connect-AzAccount -ServicePrincipal -Credential $cred -Tenant $targetTenantId | Out-Null
 
-    # Graph App Registration connection
-    Connect-MgGraph -ClientId $appClientId -TenantId $targetTenantId -ClientSecret $secureSecret -NoWelcome | Out-Null
+    # FIX: Graph SDK v2+ requires -ClientSecretCredential [PSCredential] instead of -ClientSecret [SecureString]
+    Connect-MgGraph -ClientSecretCredential $cred -TenantId $targetTenantId -NoWelcome | Out-Null
 }
 else {
     throw "Invalid AuthMethod variable. Use 'ManagedIdentity' or 'AppRegistration'."
@@ -205,7 +205,7 @@ Write-Log "Full assessment report uploaded."
 
 foreach ($subId in $targetSubscriptionIds) {
     Write-Log "Processing subscription: $subId"
-    $blobBasePath = "assessments/$targetTenantId/$subId/$today"
+    $blobBasePath   = "assessments/$targetTenantId/$subId/$today"
     $blobLatestPath = "assessments/$targetTenantId/$subId/latest"
 
     #───────────────────────────────────────────────────────────────────
@@ -250,17 +250,17 @@ foreach ($subId in $targetSubscriptionIds) {
             }
 
             $checks += [ordered]@{
-                id          = $t.TestId
-                name        = $t.TestTitle
-                pillar      = $pName
-                area        = if ($t.TestCategory) { $t.TestCategory } else { $pName }
-                status      = $status
-                risk        = $risk
-                description = if ($t.TestDescription) { $t.TestDescription.Substring(0, [math]::Min(500, $t.TestDescription.Length)) } else { "" }
-                remediation = ""
+                id           = $t.TestId
+                name         = $t.TestTitle
+                pillar       = $pName
+                area         = if ($t.TestCategory) { $t.TestCategory } else { $pName }
+                status       = $status
+                risk         = $risk
+                description  = if ($t.TestDescription) { $t.TestDescription.Substring(0, [math]::Min(500, $t.TestDescription.Length)) } else { "" }
+                remediation  = ""
                 learnMoreUrl = ""
-                score       = if ($status -eq "passed") { 100 } else { 0 }
-                weight      = 1
+                score        = if ($status -eq "passed") { 100 } else { 0 }
+                weight       = 1
             }
         }
     }
@@ -320,16 +320,16 @@ PolicyResources
         foreach ($row in $policyResults.Data) {
             $initiativeType = if ($row.initiativeId -like "*/providers/Microsoft.Authorization/policySetDefinitions/*") { "builtin" } else { "custom" }
             $initiatives += [ordered]@{
-                id               = $row.initiativeId
-                name             = if ($row.initiativeName) { $row.initiativeName } else { "Unnamed Initiative" }
-                type             = $initiativeType
-                assignmentId     = $row.policyAssignId
-                subscriptionId   = $subId
-                compliantCount   = [int]$row.compliantCount
+                id                = $row.initiativeId
+                name              = if ($row.initiativeName) { $row.initiativeName } else { "Unnamed Initiative" }
+                type              = $initiativeType
+                assignmentId      = $row.policyAssignId
+                subscriptionId    = $subId
+                compliantCount    = [int]$row.compliantCount
                 nonCompliantCount = [int]$row.nonCompliantCount
-                exemptCount      = [int]$row.exemptCount
-                totalPolicies    = [int]$row.totalPolicies
-                resources        = @()
+                exemptCount       = [int]$row.exemptCount
+                totalPolicies     = [int]$row.totalPolicies
+                resources         = @()
             }
         }
     }
@@ -344,21 +344,21 @@ PolicyResources
             $grouped = $policyStates | Group-Object { $_.PolicySetDefinitionId }
             foreach ($g in $grouped) {
                 if (-not $g.Name) { continue }
-                $compliant = ($g.Group | Where-Object { $_.ComplianceState -eq "Compliant" }).Count
+                $compliant    = ($g.Group | Where-Object { $_.ComplianceState -eq "Compliant" }).Count
                 $nonCompliant = ($g.Group | Where-Object { $_.ComplianceState -eq "NonCompliant" }).Count
-                $exempt = ($g.Group | Where-Object { $_.ComplianceState -eq "Exempt" }).Count
+                $exempt       = ($g.Group | Where-Object { $_.ComplianceState -eq "Exempt" }).Count
 
                 $initiatives += [ordered]@{
-                    id               = $g.Name
-                    name             = ($g.Group | Select-Object -First 1).PolicySetDefinitionName
-                    type             = "builtin"
-                    assignmentId     = ($g.Group | Select-Object -First 1).PolicyAssignmentId
-                    subscriptionId   = $subId
-                    compliantCount   = $compliant
+                    id                = $g.Name
+                    name              = ($g.Group | Select-Object -First 1).PolicySetDefinitionName
+                    type              = "builtin"
+                    assignmentId      = ($g.Group | Select-Object -First 1).PolicyAssignmentId
+                    subscriptionId    = $subId
+                    compliantCount    = $compliant
                     nonCompliantCount = $nonCompliant
-                    exemptCount      = $exempt
-                    totalPolicies    = ($g.Group | Select-Object -Unique PolicyDefinitionId).Count
-                    resources        = @()
+                    exemptCount       = $exempt
+                    totalPolicies     = ($g.Group | Select-Object -Unique PolicyDefinitionId).Count
+                    resources         = @()
                 }
             }
         }
@@ -467,7 +467,6 @@ PolicyResources
     }
     catch {
         Write-Log "  [WARN] Defender recommendations failed: $($_.Exception.Message)" "WARN"
-        # Restore context
         Set-AzContext -SubscriptionId $azureSubscriptionId -ErrorAction SilentlyContinue | Out-Null
     }
 
@@ -491,7 +490,7 @@ PolicyResources
         Set-AzContext -SubscriptionId $subId | Out-Null
 
         # Query governance assignments via REST
-        $token = (Get-AzAccessToken -ResourceUrl "https://management.azure.com").Token
+        $token  = (Get-AzAccessToken -ResourceUrl "https://management.azure.com").Token
         $govUri = "https://management.azure.com/subscriptions/$subId/providers/Microsoft.Security/governanceRules?api-version=2022-01-01-preview"
         $headers = @{ Authorization = "Bearer $token"; "Content-Type" = "application/json" }
 
@@ -500,7 +499,7 @@ PolicyResources
             foreach ($rule in $govResponse.value) {
                 $props = $rule.properties
 
-                $status = "notStarted"
+                $status        = "notStarted"
                 $completionPct = 0
                 if ($props.isGracePeriod) { $status = "inProgress"; $completionPct = 50 }
 
@@ -558,7 +557,7 @@ try {
         -Context $ctx `
         -Destination (Join-Path $env:TEMP "tenant-index-existing.json") `
         -Force -ErrorAction Stop
-    $existingJson = Get-Content (Join-Path $env:TEMP "tenant-index-existing.json") -Raw
+    $existingJson  = Get-Content (Join-Path $env:TEMP "tenant-index-existing.json") -Raw
     $existingIndex = $existingJson | ConvertFrom-Json
     Write-Log "  Found existing tenant-index.json - merging dates."
 }
@@ -568,14 +567,14 @@ catch {
 
 # Merge dates: keep last 90 days of history
 $maxHistoryDays = 90
-$cutoffDate = (Get-Date).AddDays(-$maxHistoryDays).ToString("yyyy-MM-dd")
+$cutoffDate     = (Get-Date).AddDays(-$maxHistoryDays).ToString("yyyy-MM-dd")
 
 $subscriptions = @()
 foreach ($subId in $targetSubscriptionIds) {
     # Get subscription display name
     $subName = $subId
     try {
-        $azSub = Get-AzSubscription -SubscriptionId $subId -ErrorAction Stop
+        $azSub   = Get-AzSubscription -SubscriptionId $subId -ErrorAction Stop
         $subName = $azSub.Name
     }
     catch {
@@ -598,7 +597,7 @@ foreach ($subId in $targetSubscriptionIds) {
     $resourceGroups = @()
     try {
         Set-AzContext -SubscriptionId $subId | Out-Null
-        $rgs = Get-AzResourceGroup -ErrorAction Stop
+        $rgs            = Get-AzResourceGroup -ErrorAction Stop
         $resourceGroups = @($rgs | ForEach-Object { $_.ResourceGroupName })
         Set-AzContext -SubscriptionId $azureSubscriptionId | Out-Null
     }
@@ -640,10 +639,9 @@ Write-Log "tenant-index.json uploaded."
 # We upload the raw JSON so a build step or CDN rule can serve it.
 Write-Log "Uploading static report data for Dashboard..."
 
-# Also upload as the baked report config the built app expects
 $reportDataJs = "window.__REPORT_DATA__ = $($reportJson | ConvertTo-Json -Depth 20 -Compress);"
-$jsBytes = [System.Text.Encoding]::UTF8.GetBytes($reportDataJs)
-$jsMs = [System.IO.MemoryStream]::new($jsBytes)
+$jsBytes      = [System.Text.Encoding]::UTF8.GetBytes($reportDataJs)
+$jsMs         = [System.IO.MemoryStream]::new($jsBytes)
 try {
     Set-AzStorageBlobContent `
         -Container $containerName `
