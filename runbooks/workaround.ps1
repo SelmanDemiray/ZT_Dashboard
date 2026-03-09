@@ -1,167 +1,288 @@
 <#
 .SYNOPSIS
-    Safely imports all required modules into an Azure Automation PS 7.4
-    Runtime Environment by staging them through Azure Blob Storage.
+    Strips ZeroTrustAssessment of bloat to get it under Azure Automation's
+    100MB module size limit, then stages and imports it into your PS 7.4
+    runtime environment automatically.
 
-.DESCRIPTION
-    Azure Automation's direct PSGallery importer has a blob size cap that
-    causes large modules (e.g. ZeroTrustAssessment) to fail with:
-    "Module data blob size is not supported."
+.WHAT IT REMOVES — safe to strip, never loaded by Azure Automation at runtime:
+    - Non-Windows native runtimes  (linux, osx, unix, win-x86, win-arm)
+    - Debug build output folders   (Debug\)
+    - Legacy .NET Framework TFMs   (net45-net48, netstandard1.x)
+    - PDB debug symbol files       (*.pdb)
+    - XML IntelliSense doc files   (*.xml inside lib/bin/ref/runtimes only)
+    - Syncfusion/report builder    (used for HTML output only — runbook uses JSON)
 
-    This script works around that by:
-      1. Downloading each module .nupkg from PSGallery to a local temp folder
-      2. Uploading it to a temporary private staging blob container you own
-      3. Generating a short-lived read-only SAS URL for that blob
-      4. Submitting the import to your 7.4 Runtime Environment via REST API
-         (New-AzAutomationModule does not support -RuntimeVersion 7.4)
-      5. Polling until each module reaches "Succeeded" before moving to the next
-      6. Cleaning up all staging blobs and the container when done
+.WHAT IT KEEPS — everything needed for Invoke-ZtAssessment JSON output:
+    - All .psm1 / .psd1 / .ps1 PowerShell files
+    - win-x64 native runtime DLLs
+    - netstandard2.x and net6+ assemblies
+    - All module manifests and config files
 
-.SAFETY SUMMARY
-    CREATES  : One temporary private blob container named 'module-staging'
-    WRITES   : Module .zip files into 'module-staging' only
-    DELETES  : Only those same .zip files, the container, and local temp files
-    UNTOUCHED: All existing containers ($web, etc), all existing blobs,
-               your 7.2 runtime and its modules, runbook code, schedules,
-               RBAC roles, Entra ID, Defender, Policy, Resource Graph data.
-    SAFETY   : Pre-check halts the script if 'module-staging' already exists
-               with foreign content to prevent accidental data loss.
-
-.COMPATIBILITY
-    Windows  : Run in local PowerShell or Cloud Shell (pwsh)
-    Linux    : Run in Azure Cloud Shell (bash or pwsh)
-    Requires : Az PowerShell module, Connect-AzAccount already run
-               (Cloud Shell handles auth automatically)
+.SAFETY:
+    - Only touches $env:TEMP\ZTStrip  (local) and 'module-staging' blob (Azure)
+    - Pre-check halts if 'module-staging' already has foreign content
+    - Uses throw instead of exit so your PowerShell window stays open on error
+    - Your $web container, existing blobs, 7.2 runtime, runbook code untouched
 
 .NOTES
-    Fill in the 5 variables in the CONFIG region before running.
-    Do NOT reorder the $modules table — it is in strict dependency order.
+    Fill in the 5 config variables. Run in local PowerShell or Cloud Shell.
+    Requires Connect-AzAccount to already be run (Cloud Shell handles this).
 #>
 
 
-#region ── CONFIG — fill in before running ────────────────────────────────
-$subscriptionId   = "YOUR_SUBSCRIPTION_ID"
-$rg               = "YOUR_RESOURCE_GROUP"
-$aa               = "YOUR_AUTOMATION_ACCOUNT_NAME"
-$runtimeName      = "YOUR_74_RUNTIME_ENV_NAME"    # exact name of PS 7.4 runtime you created in portal
-$storageAccount   = "YOUR_STORAGE_ACCOUNT_NAME"   # same storage account your runbook uses
+#region ── CONFIG ─────────────────────────────────────────────────────────
+$subscriptionId = "YOUR_SUBSCRIPTION_ID"
+$rg             = "YOUR_RESOURCE_GROUP"
+$aa             = "YOUR_AUTOMATION_ACCOUNT_NAME"
+$runtimeName    = "YOUR_74_RUNTIME_ENV_NAME"
+$storageAccount = "YOUR_STORAGE_ACCOUNT_NAME"
+$apiVersion     = "2023-05-15-preview"
 
-# Azure Automation REST API version that supports runtime environments
-$apiVersion       = "2023-05-15-preview"
+# Local working folder — wiped clean at the start and end of each run
+$workDir        = Join-Path $env:TEMP "ZTStrip"
 
-# Temporary blob container — created by this script, deleted at the end
+# Staging blob container — created by this script, deleted at end
 $stagingContainer = "module-staging"
-
-# Cross-platform temp folder:
-#   Windows      → C:\Users\<you>\AppData\Local\Temp
-#   Linux/Cloud  → /tmp
-$tempDir          = $env:TEMP
-
-# Modules in strict dependency order — do NOT reorder.
-# $true  = CRITICAL: abort the entire run if this module fails
-#          because all subsequent modules depend on it
-# $false = Non-critical: log the failure and continue
-$modules = [ordered]@{
-    "Az.Accounts"                                  = $true   # CRITICAL — base for all Az.* modules
-    "Az.Storage"                                   = $false
-    "Az.ResourceGraph"                             = $false
-    "Az.Security"                                  = $false
-    "Microsoft.Graph.Authentication"               = $true   # CRITICAL — base for all Graph modules
-    "Microsoft.Graph.Identity.DirectoryManagement" = $false
-    "Microsoft.Graph.Users"                        = $false
-    "Microsoft.Graph.Groups"                       = $false
-    "Microsoft.Graph.Applications"                 = $false
-    "Microsoft.Graph.DeviceManagement"             = $false
-    "PSFramework"                                  = $false
-    "ZeroTrustAssessment"                          = $false  # largest module — main reason this script exists
-}
 #endregion
 
 
-#region ── FUNCTION: Wait-ModuleAvailable ─────────────────────────────────
-# Polls the REST API every 15 seconds until the module's provisioningState
-# reaches "Succeeded" or a terminal failure state.
-# Returns $true on success, $false on failure or timeout.
-#
-# NOTE: All config variables are passed as explicit parameters.
-# PowerShell functions do NOT inherit parent scope variables automatically —
-# using outer scope vars directly would result in $null values and a silently
-# malformed REST URL that returns 404 with no obvious error.
-function Wait-ModuleAvailable {
+#region ── HELPERS ────────────────────────────────────────────────────────
+# Tracks how much was stripped for the final summary
+$script:removedCount = 0
+$script:removedBytes = 0
+
+function Remove-StripTarget {
+    <#
+    .SYNOPSIS Removes a local file or folder and tracks the bytes saved. #>
     param(
-        [string]$ModuleName,
-        [string]$SubscriptionId,
-        [string]$ResourceGroup,
-        [string]$AutomationAccount,
-        [string]$RuntimeName,
-        [string]$ApiVersion,
-        [int]$TimeoutSeconds = 360    # 6 minutes max — most modules provision in under 2
+        [string]$Path,
+        [string]$Reason
     )
+    if (-not (Test-Path $Path)) { return }
 
-    # Explicitly pin the Az context inside the function.
-    # In multi-subscription Cloud Shell sessions, the context can drift between
-    # function calls, causing Invoke-AzRestMethod to target the wrong subscription.
-    Set-AzContext -SubscriptionId $SubscriptionId -ErrorAction SilentlyContinue | Out-Null
-
-    # REST endpoint for a specific package inside a runtime environment
-    $uri = "https://management.azure.com/subscriptions/$SubscriptionId" +
-           "/resourceGroups/$ResourceGroup" +
-           "/providers/Microsoft.Automation/automationAccounts/$AutomationAccount" +
-           "/runtimeEnvironments/$RuntimeName/packages/$ModuleName" +
-           "?api-version=$ApiVersion"
-
-    $elapsed = 0
-    while ($elapsed -lt $TimeoutSeconds) {
-        $resp   = Invoke-AzRestMethod -Uri $uri -Method GET
-        $parsed = $resp.Content | ConvertFrom-Json
-
-        # provisioningState values: Creating, Updating, Succeeded, Failed, Canceled
-        $state  = $parsed.properties.provisioningState
-
-        switch ($state) {
-            "Succeeded" {
-                Write-Host "  ✅ $ModuleName — Available" -ForegroundColor Green
-                return $true
-            }
-            { $_ -in "Failed", "Canceled" } {
-                # Surface the actual error detail from the REST response
-                $errMsg = $parsed.properties.error.message
-                Write-Host "  ❌ $ModuleName — FAILED: $errMsg" -ForegroundColor Red
-                return $false
-            }
-            default {
-                Write-Host "  ⏳ $ModuleName — $state ($elapsed`s elapsed)..." -ForegroundColor Yellow
-                Start-Sleep -Seconds 15
-                $elapsed += 15
-            }
-        }
+    # Measure bytes before deleting
+    $bytes = if (Test-Path $Path -PathType Container) {
+        (Get-ChildItem $Path -Recurse -File -ErrorAction SilentlyContinue |
+         Measure-Object -Property Length -Sum).Sum
+    } else {
+        (Get-Item $Path).Length
     }
 
-    Write-Host "  ⚠️  $ModuleName — Timed out after $($TimeoutSeconds)s. Check portal manually." -ForegroundColor Magenta
-    return $false
+    Remove-Item $Path -Recurse -Force -ErrorAction SilentlyContinue
+    $script:removedCount++
+    $script:removedBytes += [long]$bytes
+    $shortPath = $Path -replace [regex]::Escape($script:extractDir), '...'
+    Write-Host "  🗑  [$Reason] $shortPath" -ForegroundColor DarkGray
 }
+
+# Path separator char for cross-platform regex (\ on Windows, / on Linux)
+$sep = [regex]::Escape([IO.Path]::DirectorySeparatorChar)
 #endregion
 
 
 #region ── SETUP ──────────────────────────────────────────────────────────
 Write-Host "`n══════════════════════════════════════════════════" -ForegroundColor Cyan
-Write-Host "  Azure Automation Module Importer — PS 7.4 Runtime" -ForegroundColor Cyan
+Write-Host "  ZeroTrustAssessment — Strip & Import for PS 7.4" -ForegroundColor Cyan
 Write-Host "══════════════════════════════════════════════════`n" -ForegroundColor Cyan
 
-# Ensure the Az session is pointed at the right subscription
-Set-AzContext -SubscriptionId $subscriptionId | Out-Null
+# Start with a clean working directory every run
+if (Test-Path $workDir) {
+    Write-Host "[SETUP] Cleaning previous run from $workDir..." -ForegroundColor DarkGray
+    Remove-Item $workDir -Recurse -Force
+}
+New-Item -ItemType Directory -Path $workDir | Out-Null
 
-# Get the storage account context — read-only metadata fetch, no changes made
-Write-Host "[SETUP] Connecting to storage account '$storageAccount'..." -ForegroundColor Cyan
-$ctx = (Get-AzStorageAccount -ResourceGroupName $rg -Name $storageAccount).Context
+$script:extractDir = Join-Path $workDir "extracted"
+
+Set-AzContext -SubscriptionId $subscriptionId | Out-Null
+Write-Host "[SETUP] Working directory: $workDir"
+Write-Host "[SETUP] Target runtime:    $runtimeName`n"
 #endregion
 
 
-#region ── SAFETY PRE-CHECK ───────────────────────────────────────────────
-# If a container named 'module-staging' already exists with blobs that were
-# NOT created by this script (i.e. anything not named *.zip), halt immediately.
-# This prevents the cleanup step from accidentally deleting foreign data.
+#region ── STEP 1: DOWNLOAD ───────────────────────────────────────────────
+Write-Host "[1/6] Downloading ZeroTrustAssessment from PSGallery..." -ForegroundColor Cyan
 
+$rawZip = Join-Path $workDir "ZeroTrustAssessment-original.zip"
+
+try {
+    Invoke-WebRequest `
+        -Uri     "https://www.powershellgallery.com/api/v2/package/ZeroTrustAssessment" `
+        -OutFile $rawZip `
+        -ErrorAction Stop
+}
+catch {
+    throw "Download from PSGallery failed: $_"
+}
+
+$originalMB = [math]::Round((Get-Item $rawZip).Length / 1MB, 2)
+Write-Host "  ✅ Downloaded — $originalMB MB" -ForegroundColor Yellow
+#endregion
+
+
+#region ── STEP 2: EXTRACT ────────────────────────────────────────────────
+Write-Host "`n[2/6] Extracting package..." -ForegroundColor Cyan
+
+New-Item -ItemType Directory -Path $script:extractDir | Out-Null
+Expand-Archive -Path $rawZip -DestinationPath $script:extractDir -Force
+
+Write-Host "  ✅ Extracted to: $script:extractDir"
+#endregion
+
+
+#region ── STEP 3: STRIP ──────────────────────────────────────────────────
+Write-Host "`n[3/6] Stripping unnecessary content..." -ForegroundColor Cyan
+
+# ── 3a. Non-Windows native runtime folders ─────────────────────────────
+# nupkg structure places native binaries under:
+#   lib\<tfm>\runtimes\<rid>\  OR  runtimes\<rid>\
+# Azure Automation is Windows x64, so ONLY win-x64 and win are needed.
+# Everything else (linux-x64, osx-x64, win-x86, win-arm64, etc.) is dead weight.
+
+$nonWindowsRids = @('linux*', 'osx*', 'unix*', 'win-x86', 'win-arm*', 'win-arm64')
+
+Get-ChildItem $script:extractDir -Recurse -Directory -ErrorAction SilentlyContinue |
+Where-Object {
+    # Must be inside a 'runtimes' parent folder (validated by path, not just name)
+    $_.Parent.Name -eq 'runtimes' -and
+    # And the RID folder itself must match a non-Windows pattern
+    ($nonWindowsRids | Where-Object { $_.Name -like $_ }).Count -gt 0
+} |
+ForEach-Object {
+    Remove-StripTarget -Path $_.FullName -Reason "Non-Windows RID"
+}
+
+# ── 3b. win-x86 anywhere (sometimes nested differently) ────────────────
+Get-ChildItem $script:extractDir -Recurse -Directory -ErrorAction SilentlyContinue |
+Where-Object { $_.Name -eq 'win-x86' } |
+ForEach-Object {
+    Remove-StripTarget -Path $_.FullName -Reason "win-x86 runtime"
+}
+
+# ── 3c. Debug build output folders ────────────────────────────────────
+# Release builds are functionally identical and smaller.
+# Debug folders are only useful when debugging in an IDE.
+Get-ChildItem $script:extractDir -Recurse -Directory -ErrorAction SilentlyContinue |
+Where-Object { $_.Name -eq 'Debug' } |
+ForEach-Object {
+    Remove-StripTarget -Path $_.FullName -Reason "Debug build output"
+}
+
+# ── 3d. Legacy .NET Framework TFM folders ─────────────────────────────
+# PS 7.4 on Azure Automation runs on .NET 8.
+# net45-net48 and netstandard1.x assemblies are never selected by the runtime.
+$legacyTfms = @(
+    'net45', 'net451', 'net452',
+    'net46', 'net461', 'net462',
+    'net47', 'net471', 'net472',
+    'net48', 'net481',
+    'netstandard1.0', 'netstandard1.1', 'netstandard1.2',
+    'netstandard1.3', 'netstandard1.4', 'netstandard1.5', 'netstandard1.6'
+)
+
+Get-ChildItem $script:extractDir -Recurse -Directory -ErrorAction SilentlyContinue |
+Where-Object { $_.Name -in $legacyTfms } |
+ForEach-Object {
+    Remove-StripTarget -Path $_.FullName -Reason "Legacy TFM"
+}
+
+# ── 3e. Syncfusion / report builder assets ────────────────────────────
+# ZeroTrustAssessment bundles Syncfusion DLLs for HTML/Excel report output.
+# The runbook uses Invoke-ZtAssessment which outputs JSON only — the HTML
+# rendering pipeline (and these DLLs) are never invoked in a headless run.
+# Safe to remove as long as you only consume the JSON output.
+$reportPatterns = @('syncfusion*', 'boldreports*', 'telerik*', 'reportbuilder*')
+
+# Folders
+Get-ChildItem $script:extractDir -Recurse -Directory -ErrorAction SilentlyContinue |
+Where-Object {
+    $name = $_.Name.ToLower()
+    $reportPatterns | Where-Object { $name -like $_.ToLower() }
+} |
+ForEach-Object {
+    Remove-StripTarget -Path $_.FullName -Reason "Report builder folder"
+}
+
+# Individual DLL files (when not in their own folder)
+Get-ChildItem $script:extractDir -Recurse -File -ErrorAction SilentlyContinue |
+Where-Object {
+    $name = $_.Name.ToLower()
+    $reportPatterns | Where-Object { $name -like $_.ToLower() }
+} |
+ForEach-Object {
+    Remove-StripTarget -Path $_.FullName -Reason "Report builder DLL"
+}
+
+# ── 3f. PDB debug symbol files ─────────────────────────────────────────
+# Symbol files are used by debuggers to map compiled IL back to source.
+# Never loaded at runtime under any circumstance. Unconditionally safe to remove.
+Get-ChildItem $script:extractDir -Recurse -File -Filter "*.pdb" -ErrorAction SilentlyContinue |
+ForEach-Object {
+    Remove-StripTarget -Path $_.FullName -Reason "PDB symbol"
+}
+
+# ── 3g. XML IntelliSense documentation files ──────────────────────────
+# .xml files that sit alongside .dll assemblies are IntelliSense doc files.
+# They are NEVER loaded at runtime — only consumed by IDEs for autocomplete.
+#
+# SAFETY GUARD: Only strip XMLs inside assembly output folders (lib, bin, ref,
+# runtimes). Never strip XMLs in the module root or data folders, which may
+# be actual config/schema files that the module reads at runtime.
+#
+# FIX vs previous version: Use cross-platform path separator via $sep variable
+# instead of hardcoded '\\' which silently fails on Linux/Cloud Shell.
+
+Get-ChildItem $script:extractDir -Recurse -File -Filter "*.xml" -ErrorAction SilentlyContinue |
+Where-Object {
+    # Normalize to forward slashes for consistent matching on both OS
+    $normalizedDir = $_.DirectoryName.Replace('\', '/')
+    $normalizedDir -match "/(lib|bin|ref|runtimes)/"
+} |
+ForEach-Object {
+    Remove-StripTarget -Path $_.FullName -Reason "XML doc file"
+}
+
+$removedMB = [math]::Round($script:removedBytes / 1MB, 2)
+Write-Host "`n  Stripped $($script:removedCount) items — saved $removedMB MB" -ForegroundColor Green
+#endregion
+
+
+#region ── STEP 4: REPACK & SIZE CHECK ────────────────────────────────────
+Write-Host "`n[4/6] Repacking stripped module..." -ForegroundColor Cyan
+
+$strippedZip = Join-Path $workDir "ZeroTrustAssessment-stripped.zip"
+Compress-Archive -Path "$script:extractDir\*" -DestinationPath $strippedZip -Force
+
+$strippedMB = [math]::Round((Get-Item $strippedZip).Length / 1MB, 2)
+$savedMB    = [math]::Round($originalMB - $strippedMB, 2)
+$limitMB    = 100
+
+Write-Host "  Original : $originalMB MB" -ForegroundColor Yellow
+Write-Host "  Stripped : $strippedMB MB" -ForegroundColor $(if ($strippedMB -lt $limitMB) {"Green"} else {"Red"})
+Write-Host "  Saved    : $savedMB MB"
+
+if ($strippedMB -ge $limitMB) {
+    # FIX vs previous version: use throw instead of exit 1
+    # exit 1 closes the entire PowerShell window when run interactively.
+    # throw keeps the window open and gives you the full error in context.
+    throw ("Stripped module is still $strippedMB MB — over the $limitMB MB Azure Automation limit. " +
+           "Stripping alone is not sufficient. You will need a Hybrid Worker. " +
+           "Working files preserved at: $workDir")
+}
+
+Write-Host "  ✅ Under $limitMB MB — safe to import." -ForegroundColor Green
+#endregion
+
+
+#region ── STEP 5: SAFETY PRE-CHECK FOR STAGING CONTAINER ────────────────
+Write-Host "`n[5/6] Checking storage and staging container..." -ForegroundColor Cyan
+
+$ctx = (Get-AzStorageAccount -ResourceGroupName $rg -Name $storageAccount).Context
+
+# FIX vs previous version: safety pre-check was missing entirely.
+# If a container named 'module-staging' already exists with data that belongs
+# to something else, the cleanup step at the end would delete it silently.
+# This guard detects that and halts BEFORE making any Azure changes.
 $existingContainer = Get-AzStorageContainer -Name $stagingContainer `
                                              -Context $ctx `
                                              -ErrorAction SilentlyContinue
@@ -171,213 +292,141 @@ if ($existingContainer) {
                                         -Context $ctx `
                                         -ErrorAction SilentlyContinue
 
-    # Any blob that doesn't look like a module zip is considered foreign
+    # Any blob that isn't a module zip is considered foreign (not ours)
     $foreignBlobs = @($existingBlobs | Where-Object { $_.Name -notlike "*.zip" })
 
     if ($foreignBlobs.Count -gt 0) {
-        Write-Host "⛔ SAFETY HALT — Aborting before making any changes." -ForegroundColor Red
-        Write-Host "   Container '$stagingContainer' already exists in '$storageAccount'" -ForegroundColor Red
-        Write-Host "   and contains $($foreignBlobs.Count) blob(s) not created by this script:" -ForegroundColor Red
-        $foreignBlobs | ForEach-Object { Write-Host "     - $($_.Name)" -ForegroundColor Red }
-        Write-Host "`n   This script deletes '$stagingContainer' during cleanup." -ForegroundColor Red
-        Write-Host "   ACTION REQUIRED: Rename `$stagingContainer in the Config region" -ForegroundColor Yellow
-        Write-Host "   to something unused (e.g. 'automation-module-staging'), then re-run." -ForegroundColor Yellow
-        exit 1
+        throw ("SAFETY HALT — '$stagingContainer' already exists in '$storageAccount' " +
+               "with $($foreignBlobs.Count) blob(s) not created by this script: " +
+               ($foreignBlobs.Name -join ', ') + ". " +
+               "Rename `$stagingContainer in the Config region to something unused and re-run.")
     }
-    else {
-        # Container exists but is empty or has only leftover zips from a previous run — safe to reuse
-        Write-Host "[SETUP] Container '$stagingContainer' already exists (safe to reuse).`n" -ForegroundColor Yellow
-    }
+
+    Write-Host "  Container '$stagingContainer' exists (safe to reuse — contains only .zip files)."
 }
 else {
-    # Container does not exist — create it as fully private (no public blob access)
-    New-AzStorageContainer -Name $stagingContainer `
-                            -Context $ctx `
-                            -Permission Off | Out-Null
-    Write-Host "[SETUP] Created private staging container '$stagingContainer'.`n" -ForegroundColor Cyan
+    New-AzStorageContainer -Name $stagingContainer -Context $ctx -Permission Off | Out-Null
+    Write-Host "  Created private staging container '$stagingContainer'."
 }
+
+# Upload the stripped zip to the staging container
+Write-Host "  Uploading stripped module to blob..."
+Set-AzStorageBlobContent `
+    -Container $stagingContainer `
+    -Blob      "ZeroTrustAssessment.zip" `
+    -File      $strippedZip `
+    -Context   $ctx `
+    -Force | Out-Null
+
+Write-Host "  Uploaded ($strippedMB MB)."
+
+# Generate a 1-hour read-only SAS URL
+# -Permission r = read only — the token cannot write, delete, or list
+$sasUrl = New-AzStorageBlobSASToken `
+              -Container  $stagingContainer `
+              -Blob       "ZeroTrustAssessment.zip" `
+              -Context    $ctx `
+              -Permission r `
+              -ExpiryTime (Get-Date).AddHours(1) `
+              -FullUri
+
+# Submit the import to the 7.4 runtime via REST API
+# New-AzAutomationModule -RuntimeVersion only accepts 5.1/7.2 (ValidateSet bug)
+$importUri = "https://management.azure.com/subscriptions/$subscriptionId" +
+             "/resourceGroups/$rg" +
+             "/providers/Microsoft.Automation/automationAccounts/$aa" +
+             "/runtimeEnvironments/$runtimeName/packages/ZeroTrustAssessment" +
+             "?api-version=$apiVersion"
+
+$body = @{
+    properties = @{ contentLink = @{ uri = $sasUrl } }
+} | ConvertTo-Json -Depth 5
+
+Write-Host "  Submitting import to runtime '$runtimeName'..."
+$resp = Invoke-AzRestMethod -Uri $importUri -Method PUT -Payload $body
+
+if ($resp.StatusCode -notin 200, 201, 202) {
+    $errDetail = ($resp.Content | ConvertFrom-Json).error.message
+    throw "Import submission failed (HTTP $($resp.StatusCode)): $errDetail"
+}
+
+Write-Host "  ✅ Import submitted (HTTP $($resp.StatusCode))." -ForegroundColor Green
 #endregion
 
 
-#region ── MAIN IMPORT LOOP ───────────────────────────────────────────────
-$failed  = @()     # accumulates names of modules that failed at any step
-$aborted = $false  # set to $true when a CRITICAL module fails
+#region ── STEP 6: POLL UNTIL AVAILABLE ───────────────────────────────────
+Write-Host "`n[6/6] Waiting for module to become Available..." -ForegroundColor Cyan
 
-foreach ($mod in $modules.Keys) {
+# Pin context inside polling (prevents drift in multi-subscription sessions)
+Set-AzContext -SubscriptionId $subscriptionId | Out-Null
 
-    # If a critical module failed, skip the rest of the run entirely.
-    # Continuing would produce misleading errors since the dependency is missing.
-    if ($aborted) {
-        Write-Host "`n[SKIP] $mod — skipped due to earlier critical module failure." -ForegroundColor DarkGray
-        $failed += $mod
-        continue
-    }
+$pollUri = "https://management.azure.com/subscriptions/$subscriptionId" +
+           "/resourceGroups/$rg" +
+           "/providers/Microsoft.Automation/automationAccounts/$aa" +
+           "/runtimeEnvironments/$runtimeName/packages/ZeroTrustAssessment" +
+           "?api-version=$apiVersion"
 
-    $isCritical = $modules[$mod]
-    Write-Host "`n[MODULE] $mod$(if ($isCritical) { ' (CRITICAL)' })" -ForegroundColor Cyan
+# FIX vs previous version: previous version used 'break' inside a switch to
+# exit the while loop — but 'break' in a switch exits the SWITCH, not the loop.
+# Now uses a clean $done flag so the exit condition is unambiguous.
+$elapsed = 0
+$timeout = 360
+$done    = $false
 
-    # ── Step 1: Download .nupkg from PSGallery to local temp folder ────────
-    # PSGallery returns the latest version when no version number is in the URL.
-    # A .nupkg is structurally identical to a .zip — Azure Automation accepts both.
-    # $tempDir resolves correctly on both Windows (C:\...\Temp) and Linux (/tmp).
-    $localPath = Join-Path $tempDir "$mod.zip"
+while (-not $done -and $elapsed -lt $timeout) {
+    $pollResp = Invoke-AzRestMethod -Uri $pollUri -Method GET
+    $parsed   = $pollResp.Content | ConvertFrom-Json
+    $state    = $parsed.properties.provisioningState
 
-    Write-Host "  Downloading from PSGallery..."
-    try {
-        Invoke-WebRequest `
-            -Uri     "https://www.powershellgallery.com/api/v2/package/$mod" `
-            -OutFile $localPath `
-            -ErrorAction Stop
-
-        $sizeMB = [math]::Round((Get-Item $localPath).Length / 1MB, 2)
-        Write-Host "  Downloaded — $sizeMB MB"
-    }
-    catch {
-        Write-Host "  ❌ Download failed: $_" -ForegroundColor Red
-        $failed += $mod
-        if ($isCritical) { $aborted = $true }
-        continue
-    }
-
-    # ── Step 2: Upload to the private staging container ────────────────────
-    # Writes ONLY to 'module-staging'. No other container is referenced here.
-    # Your $web container and all dashboard blobs are completely untouched.
-    Write-Host "  Uploading to staging blob..."
-    try {
-        Set-AzStorageBlobContent `
-            -Container $stagingContainer `
-            -Blob      "$mod.zip" `
-            -File      $localPath `
-            -Context   $ctx `
-            -Force `
-            -ErrorAction Stop | Out-Null
-    }
-    catch {
-        Write-Host "  ❌ Blob upload failed: $_" -ForegroundColor Red
-        $failed += $mod
-        if ($isCritical) { $aborted = $true }
-        Remove-Item $localPath -ErrorAction SilentlyContinue
-        continue
-    }
-
-    # ── Step 3: Generate a 1-hour read-only SAS URL ────────────────────────
-    # -Permission r = read only. The token cannot write, delete, or list.
-    # Azure Automation fetches the blob immediately on import submission,
-    # so 1 hour is far more than sufficient. Token auto-expires regardless.
-    $sasUrl = New-AzStorageBlobSASToken `
-                  -Container  $stagingContainer `
-                  -Blob       "$mod.zip" `
-                  -Context    $ctx `
-                  -Permission r `
-                  -ExpiryTime (Get-Date).AddHours(1) `
-                  -FullUri    # returns full https://... URL, not just the token string
-
-    # ── Step 4: Submit the import to the 7.4 runtime via REST API ──────────
-    # WHY REST and not New-AzAutomationModule?
-    # New-AzAutomationModule has a hardcoded ValidateSet of '5.1','7.2' for
-    # -RuntimeVersion. Passing '7.4' throws a parameter validation error.
-    # The REST API /runtimeEnvironments/{name}/packages has no such restriction.
-    #
-    # This PUT call only affects the exact $runtimeName URI path.
-    # Your 7.2 runtime lives under a different resource path and is not touched.
-    Write-Host "  Submitting to runtime '$runtimeName'..."
-
-    $importUri = "https://management.azure.com/subscriptions/$subscriptionId" +
-                 "/resourceGroups/$rg" +
-                 "/providers/Microsoft.Automation/automationAccounts/$aa" +
-                 "/runtimeEnvironments/$runtimeName/packages/$mod" +
-                 "?api-version=$apiVersion"
-
-    $body = @{
-        properties = @{
-            contentLink = @{
-                uri = $sasUrl    # Azure Automation downloads from here immediately
-            }
+    switch ($state) {
+        "Succeeded" {
+            Write-Host "  ✅ ZeroTrustAssessment — Available" -ForegroundColor Green
+            $done = $true
         }
-    } | ConvertTo-Json -Depth 5
-
-    $resp = Invoke-AzRestMethod -Uri $importUri -Method PUT -Payload $body
-
-    # 200 = updated existing module, 201 = created new, 202 = accepted (async)
-    if ($resp.StatusCode -notin 200, 201, 202) {
-        $errDetail = ($resp.Content | ConvertFrom-Json).error.message
-        Write-Host "  ❌ Submission failed (HTTP $($resp.StatusCode)): $errDetail" -ForegroundColor Red
-        $failed += $mod
-        if ($isCritical) { $aborted = $true }
-        Remove-Item $localPath -ErrorAction SilentlyContinue
-        continue
+        { $_ -in "Failed", "Canceled" } {
+            $errMsg = $parsed.properties.error.message
+            throw "Module import failed during provisioning: $errMsg"
+        }
+        default {
+            Write-Host "  ⏳ $state ($elapsed`s elapsed)..." -ForegroundColor Yellow
+            Start-Sleep -Seconds 15
+            $elapsed += 15
+        }
     }
+}
 
-    # ── Step 5: Poll until module is Available ─────────────────────────────
-    # Must wait for "Succeeded" before importing the next module.
-    # Dependent modules (e.g. Az.Storage needs Az.Accounts fully provisioned)
-    # will fail silently if their base dependency is still in "Creating" state.
-    $ok = Wait-ModuleAvailable `
-              -ModuleName        $mod `
-              -SubscriptionId    $subscriptionId `
-              -ResourceGroup     $rg `
-              -AutomationAccount $aa `
-              -RuntimeName       $runtimeName `
-              -ApiVersion        $apiVersion
-
-    if (-not $ok) {
-        $failed += $mod
-        if ($isCritical) { $aborted = $true }
-    }
-
-    # ── Step 6: Remove the local temp file ────────────────────────────────
-    # Cleans up your local temp folder (Windows or Linux). This only touches
-    # the file just downloaded — no other local files are affected.
-    Remove-Item $localPath -ErrorAction SilentlyContinue
+if (-not $done) {
+    Write-Host "  ⚠️  Timed out after $($timeout)s — check portal manually under:" -ForegroundColor Magenta
+    Write-Host "      Automation Account → Runtime Environments → $runtimeName → Packages" -ForegroundColor Magenta
 }
 #endregion
 
 
 #region ── CLEANUP ────────────────────────────────────────────────────────
-# All modules have definitively succeeded or failed by this point.
-# Safe to remove the staging blobs and container now.
-# Only 'module-staging' is affected — no other container is referenced.
-Write-Host "`n[CLEANUP] Removing staging blobs..." -ForegroundColor Cyan
+Write-Host "`n[CLEANUP] Removing temp files and staging blob..." -ForegroundColor Cyan
 
-Get-AzStorageBlob -Container $stagingContainer `
-                   -Context $ctx `
-                   -ErrorAction SilentlyContinue |
+# Remove local working directory (all files are in $env:TEMP\ZTStrip)
+Remove-Item $workDir -Recurse -Force -ErrorAction SilentlyContinue
+
+# Remove staging blob and container from Azure storage
+# SAFE: only 'module-staging' is targeted — no other container is referenced
+Get-AzStorageBlob -Container $stagingContainer -Context $ctx -ErrorAction SilentlyContinue |
     Remove-AzStorageBlob -Force -ErrorAction SilentlyContinue
+Remove-AzStorageContainer -Name $stagingContainer -Context $ctx -Force -ErrorAction SilentlyContinue
 
-Remove-AzStorageContainer -Name $stagingContainer `
-                            -Context $ctx `
-                            -Force `
-                            -ErrorAction SilentlyContinue
-
-Write-Host "[CLEANUP] Staging container '$stagingContainer' removed."
+Write-Host "[CLEANUP] Done."
 #endregion
 
 
 #region ── SUMMARY ────────────────────────────────────────────────────────
 Write-Host "`n══════════════════════════════════════════════════" -ForegroundColor Cyan
-
-if ($failed.Count -eq 0) {
-    Write-Host "  ✅ ALL $($modules.Count) MODULES IMPORTED SUCCESSFULLY" -ForegroundColor Green
-    Write-Host "`n  Next step: test your runbook" -ForegroundColor Green
-    Write-Host "  Automation Account → Runbooks → your runbook → Test Pane → Start" -ForegroundColor Green
-}
-else {
-    $successCount = $modules.Count - $failed.Count
-    Write-Host "  ⚠️  COMPLETED WITH ERRORS" -ForegroundColor Yellow
-    Write-Host "  Succeeded : $successCount / $($modules.Count)" -ForegroundColor Green
-    Write-Host "  Failed    : $($failed.Count) / $($modules.Count)" -ForegroundColor Red
-    $failed | ForEach-Object { Write-Host "    ✗ $_" -ForegroundColor Red }
-
-    if ($aborted) {
-        Write-Host "`n  ⛔ Run was aborted early — a CRITICAL module failed." -ForegroundColor Red
-        Write-Host "  Resolve the critical module error first, then re-run" -ForegroundColor Yellow
-        Write-Host "  with only the failed modules listed in `$modules." -ForegroundColor Yellow
-    }
-    else {
-        Write-Host "`n  To retry: remove successful modules from `$modules" -ForegroundColor Yellow
-        Write-Host "  in the Config region and re-run." -ForegroundColor Yellow
-    }
-}
-
+Write-Host "  ✅ ZeroTrustAssessment imported successfully!" -ForegroundColor Green
+Write-Host ""
+Write-Host "  Original size : $originalMB MB" -ForegroundColor Yellow
+Write-Host "  Final size    : $strippedMB MB" -ForegroundColor Green
+Write-Host "  Space saved   : $savedMB MB" -ForegroundColor Green
+Write-Host ""
+Write-Host "  Next step: test your runbook" -ForegroundColor Cyan
+Write-Host "  Automation Account → Runbooks → Test Pane → Start" -ForegroundColor Cyan
 Write-Host "══════════════════════════════════════════════════`n" -ForegroundColor Cyan
 #endregion
