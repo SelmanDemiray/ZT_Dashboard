@@ -1,22 +1,11 @@
-$automationAccount = "YourAutomationAccountName"
-$resourceGroup     = "YourResourceGroupName"
-$moduleVersion     = "2.25.0"
+https://www.powershellgallery.com/api/v2/package/Microsoft.Graph.Authentication/2.25.0
 
-$graphModules = @(
-    "Microsoft.Graph.Authentication",
-    "Microsoft.Graph.Identity.DirectoryManagement",
-    "Microsoft.Graph.Users",
-    "Microsoft.Graph.Groups",
-    "Microsoft.Graph.Applications",
-    "Microsoft.Graph.DeviceManagement"
-)
+https://www.powershellgallery.com/api/v2/package/Microsoft.Graph.Identity.DirectoryManagement/2.25.0
 
-foreach ($mod in $graphModules) {
-    Write-Host "Importing $mod @ $moduleVersion..."
-    New-AzAutomationModule `
-        -AutomationAccountName $automationAccount `
-        -ResourceGroupName $resourceGroup `
-        -Name $mod `
-        -ContentLinkUri "https://www.powershellgallery.com/api/v2/package/$mod/$moduleVersion" `
-        -RuntimeVersion '7.2'
-}
+https://www.powershellgallery.com/api/v2/package/Microsoft.Graph.Users/2.25.0
+
+https://www.powershellgallery.com/api/v2/package/Microsoft.Graph.Groups/2.25.0
+
+https://www.powershellgallery.com/api/v2/package/Microsoft.Graph.Applications/2.25.0
+
+https://www.powershellgallery.com/api/v2/package/Microsoft.Graph.DeviceManagement/2.25.0
