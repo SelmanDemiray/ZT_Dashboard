@@ -98,3 +98,15 @@ The runbook will push exactly 5 JSON files into the `$web` container:
 - `assessments/[TenantID]/[SubID]/[Date]/governance.json`
 
 **Frontend Trick:** The script also perfectly duplicates those 4 lower files into an `assessments/[TenantID]/[SubID]/latest/` directory. This allows your React dashboard to immediately pull static, real-time files without parsing historic indexes first. All historic daily data is kept permanently for audits.
+
+---
+
+## 5. Module Too Large? Use a Hybrid Runbook Worker
+
+If the `ZeroTrustAssessment` module exceeds Azure Automation's **100 MB module import limit** (even after stripping with `workaround.ps1`), you can run this runbook on an **Azure VM registered as a Hybrid Runbook Worker** — which has **no module size limit**.
+
+👉 See [`runbooks/HYBRID-DEPLOYMENT.md`](runbooks/HYBRID-DEPLOYMENT.md) for the full step-by-step guide.
+
+The hybrid approach includes:
+- **`Setup-HybridWorkerModules.ps1`** — run on the VM to install all modules locally
+- **`Invoke-ZTDashboardDataCollection-Hybrid.ps1`** — adapted runbook with Hybrid Worker diagnostics and module validation
