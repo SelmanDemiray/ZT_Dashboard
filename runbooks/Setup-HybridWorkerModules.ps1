@@ -29,9 +29,9 @@
 #Requires -Version 7.0
 
 param(
-    # Install scope — AllUsers is required for the Hybrid Worker SYSTEM account to see modules
-    [ValidateSet("CurrentUser", "AllUsers")]
-    [string]$Scope = "AllUsers"
+    # Uses a globally readable path so the Hybrid Worker SYSTEM account can see them AND
+    # Install-Module's strict UAC Admin checks are avoided.
+    [string]$CustomModulePath = "C:\ProgramData\ZtModules"
 )
 
 $ErrorActionPreference = "Stop"
@@ -71,14 +71,6 @@ if ($PSVersionTable.PSVersion.Major -lt 7) {
     Write-Host "`n  ❌ This script requires PowerShell 7.x (pwsh), not Windows PowerShell 5.1." -ForegroundColor Red
     Write-Host "     Run this in pwsh.exe, not powershell.exe.`n" -ForegroundColor Red
     throw "Wrong PowerShell version. Use pwsh."
-}
-
-# ── Ensure Administrator ────────────────────────────────────────────────
-$isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
-if (-not $isAdmin -and $Scope -eq "AllUsers") {
-    Write-Host "`n  ❌ You must run this script as Administrator to install modules in the AllUsers scope!" -ForegroundColor Red
-    Write-Host "     Right-click pwsh.exe -> Run as Administrator, then try again.`n" -ForegroundColor Red
-    throw "Administrator privileges required."
 }
 
 # Trust PSGallery if not already
@@ -125,16 +117,20 @@ if (-not $vcInstalled) {
 # ── Install modules ─────────────────────────────────────────────────────
 Write-Host "`n[INSTALL] Installing $($requiredModules.Count) modules...`n" -ForegroundColor Cyan
 
+if (-not (Test-Path $CustomModulePath)) {
+    Write-Host "  Creating module directory: $CustomModulePath" -ForegroundColor DarkGray
+    New-Item -ItemType Directory -Path $CustomModulePath -Force | Out-Null
+}
+
 $failed  = @()
 $success = @()
 
 foreach ($mod in $requiredModules) {
-    Write-Host "  Installing $mod..." -NoNewline
+    Write-Host "  Downloading $mod..." -NoNewline
     try {
-        Install-Module -Name $mod -Scope $Scope -Force -AllowClobber -SkipPublisherCheck -ErrorAction Stop
-        $installed = Get-Module -Name $mod -ListAvailable | Sort-Object Version -Descending | Select-Object -First 1
-        Write-Host " ✅ ($($installed.Version))" -ForegroundColor Green
-        $success += "$mod ($($installed.Version))"
+        Save-Module -Name $mod -Path $CustomModulePath -Force -ErrorAction Stop
+        Write-Host " ✅" -ForegroundColor Green
+        $success += $mod
     }
     catch {
         Write-Host " ❌ $($_.Exception.Message)" -ForegroundColor Red
@@ -143,6 +139,7 @@ foreach ($mod in $requiredModules) {
 }
 
 # ── Validation ──────────────────────────────────────────────────────────
+$env:PSModulePath = "$CustomModulePath;$env:PSModulePath"
 Write-Host "`n[VALIDATE] Checking all modules can be found...`n" -ForegroundColor Cyan
 
 $allGood = $true
@@ -185,7 +182,7 @@ if ($failed.Count -gt 0) {
     }
     Write-Host ""
     Write-Host "  Try running manually:" -ForegroundColor Yellow
-    Write-Host "    Install-Module -Name <module> -Scope $Scope -Force" -ForegroundColor Yellow
+    Write-Host "    Save-Module -Name <module> -Path $CustomModulePath -Force" -ForegroundColor Yellow
 }
 else {
     Write-Host "  ✅ All $($requiredModules.Count) modules installed successfully!" -ForegroundColor Green

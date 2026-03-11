@@ -37,9 +37,9 @@
 
 .TROUBLESHOOTING
     "Module XYZ not found"
-      → RDP into the VM, open pwsh AS ADMINISTRATOR, run:
-        Install-Module -Name XYZ -Scope AllUsers -Force
-      → Or re-run Setup-HybridWorkerModules.ps1 as admin.
+      → RDP into the VM, open pwsh, run:
+        Save-Module -Name XYZ -Path C:\ProgramData\ZtModules -Force
+      → Or re-run Setup-HybridWorkerModules.ps1
 
     "Failed to authenticate using Managed Identity"
       → On a Hybrid Worker, Connect-AzAccount -Identity uses the VM's
@@ -95,7 +95,7 @@ function Write-DiagnosticError {
 #region ── 0a. Hybrid Worker Diagnostics ──────────────────────────────────
 # The Automation Hybrid Worker service sometimes overrides PSModulePath.
 # We explicitly re-inject the standard AllUsers module paths here.
-$standardPaths = @("C:\Program Files\PowerShell\Modules", "C:\Program Files\WindowsPowerShell\Modules")
+$standardPaths = @("C:\ProgramData\ZtModules", "C:\Program Files\PowerShell\Modules", "C:\Program Files\WindowsPowerShell\Modules")
 foreach ($sp in $standardPaths) {
     if ((Test-Path $sp) -and ($env:PSModulePath -notmatch [regex]::Escape($sp))) {
         $env:PSModulePath = "$sp;$env:PSModulePath"
@@ -148,7 +148,7 @@ if ($missingModules.Count -gt 0) {
         -Context    "Stage 0 — Module validation" `
         -Message    "$($missingModules.Count) required module(s) are not installed on this Hybrid Worker VM." `
         -Detail     "Missing: $($missingModules -join ', ')" `
-        -Resolution "RDP into the VM, open pwsh (PowerShell 7.x) AS ADMINISTRATOR, and run: Install-Module -Name <module> -Scope AllUsers -Force. Or re-run Setup-HybridWorkerModules.ps1 as Admin."
+        -Resolution "RDP into the VM, open pwsh (PowerShell 7.x) and run: Save-Module -Name <module> -Path C:\ProgramData\ZtModules -Force. Or re-run Setup-HybridWorkerModules.ps1."
     throw "Missing modules: $($missingModules -join ', '). See Setup-HybridWorkerModules.ps1."
 }
 
