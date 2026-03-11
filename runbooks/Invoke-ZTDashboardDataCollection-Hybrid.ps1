@@ -381,8 +381,8 @@ if (Test-Path $reportPath) {
 }
 
 try {
-    Write-Log "Connecting ZeroTrustAssessment module to current Graph session..."
-    Connect-ZtAssessment
+    Write-Log "Connecting ZeroTrustAssessment module to current Graph session (Tenant: $targetTenantId)..."
+    Connect-ZtAssessment -TenantId $targetTenantId
     Write-Log "Connect-ZtAssessment — OK"
 }
 catch {
