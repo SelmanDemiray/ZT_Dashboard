@@ -117,7 +117,7 @@ foreach ($mod in $requiredModules) {
 
 # ── Environment Variables ───────────────────────────────────────────────
 Write-Host "`n[ENV] Configuring Azure Automation Environment Variables...`n" -ForegroundColor Cyan
-$psPath = $PSHOME
+$psPath = Join-Path $PSHOME "pwsh.exe"
 try {
     [Environment]::SetEnvironmentVariable("POWERSHELL_7_4_PATH", $psPath, "Machine")
     Write-Host "  ✅ Set POWERSHELL_7_4_PATH = $psPath (Machine Scope)" -ForegroundColor Green
