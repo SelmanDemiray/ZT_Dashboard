@@ -27,7 +27,6 @@
 #>
 
 #Requires -Version 7.0
-#Requires -RunAsAdministrator
 
 param(
     # Install scope — AllUsers is required for the Hybrid Worker SYSTEM account to see modules
