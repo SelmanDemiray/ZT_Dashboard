@@ -111,6 +111,10 @@ This script:
 - Installs PowerShell 7.4 (if not already present)
 - Installs all required modules for ZeroTrustAssessment
 - Validates that everything loaded correctly
+- Sets PowerShell environment variables (`POWERSHELL_7_4_PATH`) so Azure Automation can find the interpreter
+
+> [!IMPORTANT]
+> The script sets **System Environment Variables**. You must run it as **Administrator** and then **restart the VM** (or the Hybrid Worker service) before running your hybrid runbook.
 
 ```powershell
 # From your local machine, or copy the script to the VM and run:
@@ -186,6 +190,10 @@ In your **Automation Account** → **Shared Resources** → **Variables**, creat
 ---
 
 ## Troubleshooting
+
+### "Install the language interpreter and add the installation path..."
+**Cause:** The Hybrid Worker service cannot find `pwsh.exe` because the system environment variables (`POWERSHELL_7_4_PATH`) are missing or the service hasn't loaded them yet.
+**Fix:** Ensure you ran `Setup-HybridWorkerModules.ps1` as Administrator. **Restart the VM** or restart the Azure Automation Hybrid Worker service so it picks up the new environment variables.
 
 ### "ZeroTrustAssessment module not found"
 **Cause:** Modules were installed in Windows PowerShell 5.1, not PowerShell 7.4.

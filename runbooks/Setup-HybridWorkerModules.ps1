@@ -115,6 +115,24 @@ foreach ($mod in $requiredModules) {
     }
 }
 
+# ── Environment Variables ───────────────────────────────────────────────
+Write-Host "`n[ENV] Configuring Azure Automation Environment Variables...`n" -ForegroundColor Cyan
+$psPath = $PSHOME
+try {
+    [Environment]::SetEnvironmentVariable("POWERSHELL_7_4_PATH", $psPath, "Machine")
+    Write-Host "  ✅ Set POWERSHELL_7_4_PATH = $psPath (Machine Scope)" -ForegroundColor Green
+
+    [Environment]::SetEnvironmentVariable("POWERSHELL_7_2_PATH", $psPath, "Machine")
+    Write-Host "  ✅ Set POWERSHELL_7_2_PATH = $psPath (Machine Scope)" -ForegroundColor Green
+
+    Write-Host "`n  ⚠️  IMPORTANT: YOU MUST RESTART THIS VM (or the Hybrid Worker service)" -ForegroundColor Yellow
+    Write-Host "      for the Hybrid Worker Agent to detect these new variables!" -ForegroundColor Yellow
+}
+catch {
+    Write-Host "  ❌ Failed to set environment variables. Are you running as Administrator?" -ForegroundColor Red
+    Write-Host "     Error: $($_.Exception.Message)" -ForegroundColor Red
+}
+
 # ── Summary ─────────────────────────────────────────────────────────────
 Write-Host "`n══════════════════════════════════════════════════" -ForegroundColor Cyan
 
