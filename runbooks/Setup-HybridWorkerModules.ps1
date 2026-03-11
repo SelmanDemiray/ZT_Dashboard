@@ -89,6 +89,40 @@ if ($gallery -and $gallery.InstallationPolicy -ne "Trusted") {
     Set-PSRepository -Name PSGallery -InstallationPolicy Trusted
 }
 
+# ── Ensure VC++ Redistributable is installed ────────────────────────────
+Write-Host "`n[PREREQ] Checking for Microsoft Visual C++ Redistributable..." -ForegroundColor Cyan
+$vcInstalled = Get-ChildItem -Path HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall, HKLM:\SOFTWARE\Wow6432Node\Microsoft\Windows\CurrentVersion\Uninstall -ErrorAction SilentlyContinue |
+               Get-ItemProperty | Where-Object { $_.DisplayName -match "Microsoft Visual C\+\+ 2015-2022 Redistributable" }
+
+if (-not $vcInstalled) {
+    Write-Host "  ⚠️  Visual C++ Redistributable is missing." -ForegroundColor Yellow
+    Write-Host "  Downloading and installing VC_redist.x64.exe silently... " -NoNewline
+    $vcDownloadUrl = "https://aka.ms/vs/17/release/vc_redist.x64.exe"
+    $vcInstallerPath = Join-Path $env:TEMP "vc_redist.x64.exe"
+
+    try {
+        Invoke-WebRequest -Uri $vcDownloadUrl -OutFile $vcInstallerPath
+        $process = Start-Process -FilePath $vcInstallerPath -ArgumentList "/install /quiet /norestart" -Wait -PassThru
+        if ($process.ExitCode -eq 0 -or $process.ExitCode -eq 3010) {
+            Write-Host "✅ Done." -ForegroundColor Green
+            if ($process.ExitCode -eq 3010) {
+                Write-Host "  ⚠️  A reboot is technically required to complete the VC++ installation." -ForegroundColor Yellow
+            }
+        } else {
+            Write-Host "❌ Failed (Exit Code: $($process.ExitCode))" -ForegroundColor Red
+            Write-Host "     Please install manually: $vcDownloadUrl" -ForegroundColor Red
+        }
+    }
+    catch {
+        Write-Host "❌ Download or installation failed: $($_.Exception.Message)" -ForegroundColor Red
+    }
+    finally {
+        if (Test-Path $vcInstallerPath) { Remove-Item $vcInstallerPath -Force }
+    }
+} else {
+    Write-Host "  ✅ Visual C++ Redistributable is already installed." -ForegroundColor Green
+}
+
 # ── Install modules ─────────────────────────────────────────────────────
 Write-Host "`n[INSTALL] Installing $($requiredModules.Count) modules...`n" -ForegroundColor Cyan
 
