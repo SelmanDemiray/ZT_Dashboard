@@ -27,11 +27,12 @@
 #>
 
 #Requires -Version 7.0
+#Requires -RunAsAdministrator
 
 param(
-    # Install scope — CurrentUser requires no admin; AllUsers does
+    # Install scope — AllUsers is required for the Hybrid Worker SYSTEM account to see modules
     [ValidateSet("CurrentUser", "AllUsers")]
-    [string]$Scope = "CurrentUser"
+    [string]$Scope = "AllUsers"
 )
 
 $ErrorActionPreference = "Stop"
@@ -71,6 +72,14 @@ if ($PSVersionTable.PSVersion.Major -lt 7) {
     Write-Host "`n  ❌ This script requires PowerShell 7.x (pwsh), not Windows PowerShell 5.1." -ForegroundColor Red
     Write-Host "     Run this in pwsh.exe, not powershell.exe.`n" -ForegroundColor Red
     throw "Wrong PowerShell version. Use pwsh."
+}
+
+# ── Ensure Administrator ────────────────────────────────────────────────
+$isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+if (-not $isAdmin -and $Scope -eq "AllUsers") {
+    Write-Host "`n  ❌ You must run this script as Administrator to install modules in the AllUsers scope!" -ForegroundColor Red
+    Write-Host "     Right-click pwsh.exe -> Run as Administrator, then try again.`n" -ForegroundColor Red
+    throw "Administrator privileges required."
 }
 
 # Trust PSGallery if not already
