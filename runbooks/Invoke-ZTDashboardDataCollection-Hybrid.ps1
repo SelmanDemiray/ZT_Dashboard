@@ -380,21 +380,10 @@ if (Test-Path $reportPath) {
     Remove-Item -Path $reportPath -Recurse -Force
 }
 
-try {
-    Write-Log "Connecting ZeroTrustAssessment module to current Graph session (Tenant: $targetTenantId)..."
-    Connect-ZtAssessment -TenantId $targetTenantId
-    Write-Log "Connect-ZtAssessment — OK"
-}
-catch {
-    Write-DiagnosticError `
-        -Context    "Stage 4 — Connect-ZtAssessment" `
-        -Message    "Failed to connect the ZeroTrustAssessment module." `
-        -Detail     $_.Exception.Message `
-        -Resolution "1. Verify ZeroTrustAssessment module is installed (Get-Module -ListAvailable ZeroTrustAssessment). " +
-                    "2. Verify Connect-MgGraph succeeded in Stage 2. " +
-                    "3. Verify the identity has 'Global Reader' in Entra ID."
-    throw $_
-}
+    # We skip Connect-ZtAssessment here because Stage 2 already authenticated to Microsoft Graph.
+    # Calling Connect-MgGraph again (which Connect-ZtAssessment does) on a Windows Hybrid Worker
+    # triggers an interactive WAM (Web Account Manager) prompt, causing the script to hang or fail.
+    Write-Log "ZeroTrustAssessment module will use the Graph session established in Stage 2."
 
 try {
     Write-Log "Running Invoke-ZtAssessment (Path: $reportPath, Days: 30)..."
