@@ -393,6 +393,12 @@ if (Test-Path $reportPath) {
     $duckdbrcPath = Join-Path $env:USERPROFILE ".duckdbrc"
     "SET max_memory='500MB';" | Out-File -FilePath $duckdbrcPath -Encoding ascii -Force
 
+    # ── WORKAROUND: Graph API Stream Failures ────────────────────────────
+    # Prevent "Error while copying content to a stream" during large exports
+    # by forcing the Microsoft Graph PowerShell SDK to use HTTP/1.1 instead of HTTP/2.
+    Write-Log "Configuring Microsoft Graph to use HTTP/1.1 to prevent stream errors..."
+    $env:MicrosoftGraphHttpVersion = "HTTP11"
+
 try {
     Write-Log "Running Invoke-ZtAssessment (Path: $reportPath, Days: 30)..."
     Invoke-ZtAssessment -Path $reportPath -Days 30 -DisableTelemetry

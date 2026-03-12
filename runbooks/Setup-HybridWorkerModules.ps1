@@ -164,6 +164,9 @@ try {
     [Environment]::SetEnvironmentVariable("POWERSHELL_7_2_PATH", $psPath, "Machine")
     Write-Host "  ✅ Set POWERSHELL_7_2_PATH = $psPath (Machine Scope)" -ForegroundColor Green
 
+    [Environment]::SetEnvironmentVariable("MicrosoftGraphHttpVersion", "HTTP11", "Machine")
+    Write-Host "  ✅ Set MicrosoftGraphHttpVersion = HTTP11 (Machine Scope) to prevent stream errors" -ForegroundColor Green
+
     Write-Host "`n  ⚠️  IMPORTANT: YOU MUST RESTART THIS VM (or the Hybrid Worker service)" -ForegroundColor Yellow
     Write-Host "      for the Hybrid Worker Agent to detect these new variables!" -ForegroundColor Yellow
 }
