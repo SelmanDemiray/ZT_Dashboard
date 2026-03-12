@@ -400,6 +400,9 @@ if (Test-Path $reportPath) {
     $env:MicrosoftGraphHttpVersion = "HTTP11"
 
 try {
+    Write-Log "Configuring Microsoft Graph client timeout to 4 hours (14400s) for massive enterprise exports..."
+    Set-MgRequestContext -ClientTimeout 14400 -ErrorAction SilentlyContinue
+
     Write-Log "Running Invoke-ZtAssessment (Path: $reportPath, Days: 30)..."
     Invoke-ZtAssessment -Path $reportPath -Days 30 -DisableTelemetry
     Write-Log "Invoke-ZtAssessment — completed"
