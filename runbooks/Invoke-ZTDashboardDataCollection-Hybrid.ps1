@@ -385,6 +385,14 @@ if (Test-Path $reportPath) {
     # triggers an interactive WAM (Web Account Manager) prompt, causing the script to hang or fail.
     Write-Log "ZeroTrustAssessment module will use the Graph session established in Stage 2."
 
+    # ── WORKAROUND: DuckDB Memory Limit in Hybrid Workers ────────────────
+    # Hybrid Workers sometimes run under memory limits (e.g. 32-bit process constraints).
+    # DuckDB will crash if it attempts to allocate >800MB when reading large JSON reports.
+    # We use DuckDB's native initialization file (~/.duckdbrc) to safely cap its memory globally.
+    Write-Log "Configuring DuckDB memory limits via ~/.duckdbrc..."
+    $duckdbrcPath = Join-Path $env:USERPROFILE ".duckdbrc"
+    "SET max_memory='500MB';" | Out-File -FilePath $duckdbrcPath -Encoding ascii -Force
+
 try {
     Write-Log "Running Invoke-ZtAssessment (Path: $reportPath, Days: 30)..."
     Invoke-ZtAssessment -Path $reportPath -Days 30 -DisableTelemetry
@@ -912,6 +920,11 @@ Write-Log "━━━ STAGE 10: Cleanup ━━━"
 if (Test-Path $reportPath) {
     Remove-Item -Path $reportPath -Recurse -Force -ErrorAction SilentlyContinue
     Write-Log "Temp report folder removed."
+}
+
+if ($null -ne $duckdbrcPath -and (Test-Path $duckdbrcPath)) {
+    Remove-Item -Path $duckdbrcPath -Force -ErrorAction SilentlyContinue
+    Write-Log "Temp DuckDB configuration file removed."
 }
 
 Disconnect-MgGraph -ErrorAction SilentlyContinue | Out-Null
