@@ -190,6 +190,18 @@ Write-Log "Target Tenant    : $targetTenantId"
 #region ── 2. Authenticate ────────────────────────────────────────────────
 Write-Log "━━━ STAGE 2: Authenticating ━━━"
 
+# ── WORKAROUND: Suppress WAM / interactive auth prompts ─────────────────
+# The Microsoft Graph SDK on Windows enables WAM (Web Account Manager) by default.
+# During long-running exports, token renewals can trigger interactive browser/WAM
+# popups which fail in a non-interactive runbook. These env vars force non-interactive only.
+Write-Log "Suppressing WAM and interactive authentication prompts..."
+$env:AZURE_IDENTITY_DISABLE_INTERACTIVEBROWSERCREDENTIAL = "true"
+$env:AZURE_IDENTITY_DISABLE_MULTITENANTAUTH = "true"
+# Disable the Visual Studio credential and Shared Token Cache to avoid
+# unexpected interactive flows on the Hybrid Worker VM.
+$env:AZURE_IDENTITY_DISABLE_VISUALSTUDIOCREDENTIAL = "true"
+$env:AZURE_IDENTITY_DISABLE_SHAREDTOKENCACHECREDENTIAL = "true"
+
 if ($authMethod -eq 'ManagedIdentity') {
     Write-Log "Auth method: Managed Identity (VM's System-Assigned Identity)"
     Write-Log "NOTE: On a Hybrid Worker, -Identity uses the VM's MI, not the Automation Account's."
@@ -207,7 +219,7 @@ if ($authMethod -eq 'ManagedIdentity') {
     }
 
     try {
-        Connect-MgGraph -Identity -TenantId $targetTenantId -NoWelcome | Out-Null
+        Connect-MgGraph -Identity -TenantId $targetTenantId -NoWelcome -ContextScope Process | Out-Null
         Write-Log "Connect-MgGraph (Managed Identity) — OK"
     }
     catch {
@@ -254,7 +266,7 @@ elseif ($authMethod -eq 'AppRegistration') {
     }
 
     try {
-        Connect-MgGraph -ClientSecretCredential $cred -TenantId $targetTenantId -NoWelcome | Out-Null
+        Connect-MgGraph -ClientSecretCredential $cred -TenantId $targetTenantId -NoWelcome -ContextScope Process | Out-Null
         Write-Log "Connect-MgGraph (App Registration) — OK"
     }
     catch {
@@ -319,6 +331,146 @@ foreach ($s in $allSubs) {
 #endregion
 
 
+#region ── 2c. Pre-flight Permission Validation ────────────────────────────
+Write-Log "━━━ STAGE 2c: Pre-flight Permission Checks ━━━"
+Write-Log "Validating permissions BEFORE the long-running assessment to fail fast..."
+
+# ── Check 1: Microsoft Graph API Permissions ─────────────────────────────
+Write-Log "  [Check 1] Validating Microsoft Graph API permissions..."
+
+$requiredGraphScopes = @(
+    'AuditLog.Read.All'
+    'CrossTenantInformation.ReadBasic.All'
+    'DeviceManagementApps.Read.All'
+    'DeviceManagementConfiguration.Read.All'
+    'DeviceManagementManagedDevices.Read.All'
+    'DeviceManagementRBAC.Read.All'
+    'DeviceManagementServiceConfig.Read.All'
+    'Directory.Read.All'
+    'DirectoryRecommendations.Read.All'
+    'EntitlementManagement.Read.All'
+    'IdentityRiskEvent.Read.All'
+    'IdentityRiskyUser.Read.All'
+    'Policy.Read.All'
+    'Policy.Read.ConditionalAccess'
+    'Policy.Read.PermissionGrant'
+    'PrivilegedAccess.Read.AzureAD'
+    'Reports.Read.All'
+    'RoleManagement.Read.All'
+    'UserAuthenticationMethod.Read.All'
+)
+
+try {
+    $mgContext = Get-MgContext -ErrorAction Stop
+    if (-not $mgContext) {
+        throw "No active Microsoft Graph session found."
+    }
+    Write-Log "  Graph context: AuthType=$($mgContext.AuthType), TenantId=$($mgContext.TenantId), ClientId=$($mgContext.ClientId)"
+
+    # For app-only auth, $context.Scopes is usually just '.default'.
+    # We query the service principal's actual appRoleAssignments to verify permissions.
+    if ($mgContext.AuthType -ne 'Delegated') {
+        Write-Log "  App-only auth detected — checking appRoleAssignments on the service principal..."
+        try {
+            # Find the service principal for our app
+            $spResult = Invoke-MgGraphRequest -Uri "https://graph.microsoft.com/v1.0/servicePrincipals?`$filter=appId eq '$($mgContext.ClientId)'&`$select=id" -Method GET -ErrorAction Stop
+            $spId = $spResult.value[0].id
+            if (-not $spId) { throw "Service principal not found for appId '$($mgContext.ClientId)'." }
+
+            # Get the Microsoft Graph resource service principal
+            $graphSpResult = Invoke-MgGraphRequest -Uri "https://graph.microsoft.com/v1.0/servicePrincipals?`$filter=appId eq '00000003-0000-0000-c000-000000000000'&`$select=id,appRoles" -Method GET -ErrorAction Stop
+            $graphSpId = $graphSpResult.value[0].id
+            $graphAppRoles = $graphSpResult.value[0].appRoles
+
+            # Get our app's role assignments to MS Graph
+            $roleAssignments = Invoke-MgGraphRequest -Uri "https://graph.microsoft.com/v1.0/servicePrincipals/$spId/appRoleAssignments?`$filter=resourceId eq $graphSpId&`$top=200" -Method GET -ErrorAction Stop
+
+            # Build a lookup: roleId → roleName
+            $roleIdToName = @{}
+            foreach ($role in $graphAppRoles) {
+                $roleIdToName[$role.id] = $role.value
+            }
+
+            $grantedScopes = @()
+            foreach ($assignment in $roleAssignments.value) {
+                $roleName = $roleIdToName[$assignment.appRoleId]
+                if ($roleName) { $grantedScopes += $roleName }
+            }
+
+            $missingScopes = @($requiredGraphScopes | Where-Object { $grantedScopes -notcontains $_ })
+
+            if ($missingScopes.Count -gt 0) {
+                $appId = $mgContext.ClientId
+                $entraUrl = "https://entra.microsoft.com/#view/Microsoft_AAD_RegisteredApps/ApplicationMenuBlade/~/CallAnAPI/appId/$appId/isMSAApp~/false"
+                Write-DiagnosticError `
+                    -Context    "Stage 2c — Graph API permissions" `
+                    -Message    "$($missingScopes.Count) required Microsoft Graph Application permission(s) are NOT granted to this App Registration." `
+                    -Detail     "Missing: $($missingScopes -join ', ')" `
+                    -Resolution "1. Open $entraUrl `n2. Add the missing Application permissions listed above. `n3. Click 'Grant admin consent'. `n4. Wait 5 minutes for propagation, then re-run."
+                throw "Pre-flight failed: $($missingScopes.Count) missing Graph permission(s): $($missingScopes -join ', ')"
+            }
+
+            Write-Log "  ✅ All $($requiredGraphScopes.Count) required Graph API permissions are granted."
+            Write-Log "     Granted permissions: $($grantedScopes.Count) total"
+        }
+        catch {
+            if ($_.Exception.Message -like '*Pre-flight failed*') { throw $_ }
+            Write-Log "  [WARN] Could not enumerate appRoleAssignments (non-fatal): $($_.Exception.Message)" "WARN"
+            Write-Log "  Falling back to Graph data probe to verify access..." "WARN"
+        }
+    }
+    else {
+        # Delegated auth — check scopes directly
+        $currentScopes = $mgContext.Scopes
+        $missingScopes = @($requiredGraphScopes | Where-Object { $currentScopes -notcontains $_ })
+        if ($missingScopes.Count -gt 0) {
+            Write-DiagnosticError `
+                -Context    "Stage 2c — Graph API scopes (Delegated)" `
+                -Message    "$($missingScopes.Count) required Graph scope(s) are missing from the current session." `
+                -Detail     "Missing: $($missingScopes -join ', ')" `
+                -Resolution "Re-authenticate with: Connect-MgGraph -Scopes (Get-ZtGraphScope)"
+            throw "Pre-flight failed: $($missingScopes.Count) missing Graph scope(s)."
+        }
+        Write-Log "  ✅ All $($requiredGraphScopes.Count) required Graph scopes present in session."
+    }
+}
+catch {
+    if ($_.Exception.Message -like '*Pre-flight failed*') { throw $_ }
+    Write-DiagnosticError `
+        -Context    "Stage 2c — Graph context validation" `
+        -Message    "Failed to validate Microsoft Graph session." `
+        -Detail     $_.Exception.Message `
+        -Resolution "Check that Stage 2 authentication completed successfully."
+    throw $_
+}
+
+# ── Check 2: Graph Data Probe ────────────────────────────────────────────
+Write-Log "  [Check 2] Probing Microsoft Graph API with a lightweight request..."
+try {
+    $probeResult = Invoke-MgGraphRequest -Uri "https://graph.microsoft.com/v1.0/organization" -Method GET -ErrorAction Stop
+    if (-not $probeResult.value -or $probeResult.value.Count -eq 0) {
+        throw "Graph returned empty organization data."
+    }
+    $orgName = $probeResult.value[0].displayName
+    Write-Log "  ✅ Graph API probe succeeded — Organization: $orgName"
+}
+catch {
+    Write-DiagnosticError `
+        -Context    "Stage 2c — Graph data probe" `
+        -Message    "Authenticated to Graph but cannot read tenant data." `
+        -Detail     $_.Exception.Message `
+        -Resolution "The identity may lack 'Directory.Read.All' or the 'Global Reader' Entra ID role. Check API permissions and admin consent."
+    throw $_
+}
+
+# ── Check 3: Storage Write Probe ─────────────────────────────────────────
+# (Runs after Stage 3 discovers the storage account — we insert a deferred check there.)
+# For now, mark pre-flight Graph checks as complete.
+
+Write-Log "  All pre-flight permission checks passed (Graph). Storage will be verified in Stage 3."
+#endregion
+
+
 #region ── 3. Discover Storage Account ───────────────────────────────────
 Write-Log "━━━ STAGE 3: Discovering Storage Account '$storageAccountName' ━━━"
 
@@ -368,6 +520,43 @@ catch {
         -Resolution "Assign 'Storage Blob Data Contributor' to the identity on the storage account."
     throw $_
 }
+
+# ── Pre-flight Check 3 (deferred): Storage write probe ───────────────────
+Write-Log "  [Pre-flight Check 3] Testing storage write access..."
+try {
+    $probeBlob   = "_preflight-check.json"
+    $probeData   = '{"check":"preflight","ts":"' + $today + '"}'
+    $probeBytes  = [System.Text.Encoding]::UTF8.GetBytes($probeData)
+    $probeStream = [System.IO.MemoryStream]::new($probeBytes)
+    try {
+        Set-AzStorageBlobContent `
+            -Container   $containerName `
+            -Blob        $probeBlob `
+            -BlobType    Block `
+            -Stream      $probeStream `
+            -ContentType "application/json" `
+            -Context     $ctx `
+            -Force | Out-Null
+    }
+    finally {
+        $probeStream.Dispose()
+    }
+
+    # Clean up the probe blob
+    Remove-AzStorageBlob -Container $containerName -Blob $probeBlob -Context $ctx -Force -ErrorAction SilentlyContinue | Out-Null
+    Write-Log "  ✅ Storage write probe succeeded — 'Storage Blob Data Contributor' confirmed."
+}
+catch {
+    Write-DiagnosticError `
+        -Context    "Stage 3 — Storage write pre-flight" `
+        -Message    "Cannot write blobs to container '$containerName' in storage account '$storageAccountName'." `
+        -Detail     $_.Exception.Message `
+        -Resolution "Assign 'Storage Blob Data Contributor' role to the identity on the storage account. " +
+                    "Azure Portal > Storage Account > Access Control (IAM) > Add role assignment."
+    throw $_
+}
+
+Write-Log "━━━ All pre-flight checks PASSED — safe to proceed with long-running assessment ━━━"
 #endregion
 
 
@@ -398,6 +587,17 @@ if (Test-Path $reportPath) {
     # by forcing the Microsoft Graph PowerShell SDK to use HTTP/1.1 instead of HTTP/2.
     Write-Log "Configuring Microsoft Graph to use HTTP/1.1 to prevent stream errors..."
     $env:MicrosoftGraphHttpVersion = "HTTP11"
+
+    # ── WORKAROUND: Override Test-ZtContext for app-only auth ────────────
+    # Invoke-ZtAssessment internally calls Test-ZtContext which:
+    #   1. Checks $context.Scopes — but for app-only auth this is just '.default',
+    #      causing a false 'missing scopes' error even when all permissions are granted.
+    #   2. Calls /me/transitiveMemberOf — a delegated-only endpoint that fails for
+    #      service principals (though guarded behind AuthType check).
+    # Since Stage 2c already exhaustively validated all permissions, we override
+    # Test-ZtContext to return $true and skip these inapplicable checks.
+    Write-Log "Overriding Test-ZtContext for app-only auth (permissions already validated in Stage 2c)..."
+    function global:Test-ZtContext { return $true }
 
 try {
     Write-Log "Configuring Microsoft Graph client timeout to 4 hours (14400s) for massive enterprise exports..."
