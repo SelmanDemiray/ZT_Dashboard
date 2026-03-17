@@ -1,1153 +1,2977 @@
-<#
-.SYNOPSIS
-    Azure Automation Hybrid Runbook — Zero Trust Dashboard daily data collection.
-
-.DESCRIPTION
-    This is the HYBRID WORKER version of the ZeroTrustAssessment data collection
-    runbook. It runs on an Azure VM registered as a Hybrid Runbook Worker, which
-    removes the 100 MB module size limit imposed by the Azure Automation sandbox.
-
-    The ZeroTrustAssessment module is installed locally on the VM via
-    Install-Module (see Setup-HybridWorkerModules.ps1), so it can be any size.
-
-    Functional behavior is identical to the cloud version:
-      • Authenticates via Managed Identity or App Registration
-      • Runs ZeroTrustAssessment to produce the assessment JSON
-      • Collects Azure Policy, Defender for Cloud, and Governance data
-      • Uploads structured JSON files to a storage account for the React dashboard
-
-    KEY DIFFERENCES FROM CLOUD VERSION:
-      • Stage 0 validates that all required modules are installed locally
-      • Prints Hybrid Worker diagnostics (hostname, PS version, worker group)
-      • Modules are loaded from the VM's local module path, not Azure Automation runtime
-      • No 100 MB module size limit
-
-.NOTES
-    Prerequisites (one-time setup):
-      1. Azure VM registered as a Hybrid Runbook Worker (see HYBRID-DEPLOYMENT.md)
-      2. All modules installed locally on the VM via Setup-HybridWorkerModules.ps1
-      3. Permissions:
-         - 'Reader' on every subscription in the tenant (Azure RBAC)
-         - 'Storage Blob Data Contributor' on the storage account (Azure RBAC)
-         - 'Global Reader' in Entra ID (for ZeroTrustAssessment / MS Graph)
-      4. Automation Variables (same as cloud version):
-         - AuthMethod, TargetTenantId, StorageAccountName, BlobContainerName
-         - If AppRegistration: AppClientId, AppClientSecret (encrypted)
-      5. Runbook schedule set to "Run on: Hybrid Worker" targeting your HRW group.
-
-.TROUBLESHOOTING
-    "Module XYZ not found"
-      → RDP into the VM, open pwsh, run:
-        Save-Module -Name XYZ -Path C:\ProgramData\ZtModules -Force
-      → Or re-run Setup-HybridWorkerModules.ps1
-
-    "Failed to authenticate using Managed Identity"
-      → On a Hybrid Worker, Connect-AzAccount -Identity uses the VM's
-        Managed Identity, not the Automation Account's. Assign roles to
-        the VM's identity in Azure Portal → VM → Identity.
-
-    "No enabled subscriptions found"
-      → The VM's identity (or App Registration) lacks 'Reader' RBAC
-        on subscriptions. Assign via IAM on each subscription.
-
-    "ZeroTrustAssessmentReport.json was not generated"
-      → The identity needs 'Global Reader' in Entra ID for Graph queries.
-        Check Entra ID → Roles and Administrators.
-#>
-
 param()
 
+
+
 #region ── 0. Strict mode, preferences & helpers ──────────────────────────
+
 Set-StrictMode -Version Latest
+
 $ErrorActionPreference = "Stop"
+
 $InformationPreference = "Continue"
+
 $today = (Get-Date).ToString("yyyy-MM-dd")
 
-# ── Write-Log ──────────────────────────────────────────────────────────────
+
+
 function Write-Log {
+
     param(
+
         [string]$Message,
+
         [ValidateSet("INFO","WARN","ERROR","DEBUG")]
+
         [string]$Level = "INFO"
+
     )
+
     $ts = (Get-Date).ToString("HH:mm:ss")
+
     Write-Output "[$ts][$Level] $Message"
+
 }
 
-# ── Write-DiagnosticError ──────────────────────────────────────────────────
+
+
 function Write-DiagnosticError {
+
     param(
+
         [string]$Context,
+
         [string]$Message,
-        [string]$Detail     = "",
+
+        [string]$Detail = "",
+
         [string]$Resolution = ""
+
     )
+
     Write-Log "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" "ERROR"
-    Write-Log "FATAL ERROR in: $Context"                        "ERROR"
-    Write-Log "Problem  : $Message"                             "ERROR"
-    if ($Detail)     { Write-Log "Detail   : $Detail"           "ERROR" }
-    if ($Resolution) { Write-Log "Fix      : $Resolution"       "ERROR" }
+
+    Write-Log "FATAL ERROR in: $Context" "ERROR"
+
+    Write-Log "Problem : $Message" "ERROR"
+
+    if ($Detail) { Write-Log "Detail : $Detail" "ERROR" }
+
+    if ($Resolution) { Write-Log "Fix : $Resolution" "ERROR" }
+
     Write-Log "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" "ERROR"
+
 }
+
+
+
+function Write-TempUtf8File {
+
+    param(
+
+        [Parameter(Mandatory)][string]$Content,
+
+        [Parameter(Mandatory)][string]$Extension
+
+    )
+
+
+
+    $ext = if ($Extension.StartsWith(".")) { $Extension } else { ".$Extension" }
+
+    $path = Join-Path $env:TEMP ("blobupload-" + [guid]::NewGuid().ToString() + $ext)
+
+    [System.IO.File]::WriteAllText($path, $Content, [System.Text.UTF8Encoding]::new($false))
+
+    return $path
+
+}
+
 #endregion
+
+#region ── 0aa. User-Assigned Managed Identity (UAMI) diagnostics ──────────
+
+
+
+function Write-MiDiagnostic {
+
+    param(
+
+        [Parameter(Mandatory)][string]$Code,
+
+        [Parameter(Mandatory)][string]$Context,
+
+        [Parameter(Mandatory)][string]$Message,
+
+        [string]$Detail = "",
+
+        [string]$Resolution = ""
+
+    )
+
+
+
+    Write-Log "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" "ERROR"
+
+    Write-Log "[$Code] $Context" "ERROR"
+
+    Write-Log "Problem : $Message" "ERROR"
+
+    if ($Detail)     { Write-Log "Detail  : $Detail" "ERROR" }
+
+    if ($Resolution) { Write-Log "Fix     : $Resolution" "ERROR" }
+
+    Write-Log "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" "ERROR"
+
+}
+
+
+
+function Test-IsGuid {
+
+    param([string]$Value)
+
+    $out = [guid]::Empty
+
+    return [guid]::TryParse($Value, [ref]$out)
+
+}
+
+
+
+function ConvertFrom-JwtPayload {
+
+    param([Parameter(Mandatory)][string]$Jwt)
+
+
+
+    try {
+
+        $parts = $Jwt.Split('.')
+
+        if ($parts.Count -lt 2) { return $null }
+
+
+
+        $payload = $parts[1].Replace('-', '+').Replace('_', '/')
+
+        switch ($payload.Length % 4) {
+
+            2 { $payload += '==' }
+
+            3 { $payload += '=' }
+
+        }
+
+
+
+        $json = [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($payload))
+
+        return ($json | ConvertFrom-Json)
+
+    }
+
+    catch {
+
+        return $null
+
+    }
+
+}
+
+
+
+function Get-ImdsToken {
+
+    param(
+
+        [Parameter(Mandatory)][string]$Resource,
+
+        [Parameter(Mandatory)][string]$ClientId,
+
+        [int]$TimeoutSec = 10
+
+    )
+
+
+
+    $uri = "http://169.254.169.254/metadata/identity/oauth2/token" +
+
+           "?api-version=2018-02-01" +
+
+           "&resource=$([uri]::EscapeDataString($Resource))" +
+
+           "&client_id=$([uri]::EscapeDataString($ClientId))"
+
+
+
+    try {
+
+        return Invoke-RestMethod -Method GET -Uri $uri -Headers @{ Metadata = "true" } -TimeoutSec $TimeoutSec -ErrorAction Stop
+
+    }
+
+    catch {
+
+        $statusCode = $null
+
+        $rawBody = $null
+
+        $detail = $_.Exception.Message
+
+
+
+        try {
+
+            $resp = $_.Exception.Response
+
+            if ($resp) {
+
+                $statusCode = [int]$resp.StatusCode
+
+                $reader = New-Object System.IO.StreamReader($resp.GetResponseStream())
+
+                $rawBody = $reader.ReadToEnd()
+
+                $reader.Dispose()
+
+            }
+
+        }
+
+        catch { }
+
+
+
+        $ex = New-Object System.Exception("IMDS token request failed. StatusCode=$statusCode; Body=$rawBody; Message=$detail")
+
+        if ($statusCode -ne $null) { $ex.Data["StatusCode"] = $statusCode }
+
+        if ($rawBody)              { $ex.Data["ResponseBody"] = $rawBody }
+
+        throw $ex
+
+    }
+
+}
+
+
+
+function Resolve-ImdsFailure {
+
+    param(
+
+        [string]$Stage,
+
+        [System.Exception]$Exception,
+
+        [string]$ClientId
+
+    )
+
+
+
+    $statusCode = $null
+
+    $body = $null
+
+
+
+    try { $statusCode = $Exception.Data["StatusCode"] } catch { }
+
+    try { $body = $Exception.Data["ResponseBody"] } catch { }
+
+
+
+    $bodyText = [string]$body
+
+    $msg = [string]$Exception.Message
+
+
+
+    if ($statusCode -eq 400 -and $bodyText -match 'Identity not found') {
+
+        Write-MiDiagnostic `
+
+            -Code "MI-UAMI-004" `
+
+            -Context $Stage `
+
+            -Message "The specified user-assigned managed identity is not attached to this VM." `
+
+            -Detail "ClientId=$ClientId; IMDS status=400; Body=$bodyText" `
+
+            -Resolution "Attach the UAMI to the Hybrid Worker VM: VM > Identity > User assigned > Add. Confirm the Client ID matches the Automation Variable."
+
+        throw $Exception
+
+    }
+
+    elseif ($statusCode -eq 400 -and $bodyText -match 'invalid_resource') {
+
+        Write-MiDiagnostic `
+
+            -Code "MI-UAMI-005" `
+
+            -Context $Stage `
+
+            -Message "IMDS rejected the requested resource URI." `
+
+            -Detail "Status=400; Body=$bodyText" `
+
+            -Resolution "Check the resource URI. Expected values are https://management.azure.com/ and https://graph.microsoft.com/."
+
+        throw $Exception
+
+    }
+
+    elseif ($statusCode -eq 403) {
+
+        Write-MiDiagnostic `
+
+            -Code "MI-UAMI-006" `
+
+            -Context $Stage `
+
+            -Message "The VM cannot access the Instance Metadata Service (IMDS)." `
+
+            -Detail "Status=403; Body=$bodyText; Message=$msg" `
+
+            -Resolution "Ensure nothing on the VM blocks 169.254.169.254 (proxy, firewall, endpoint security, custom route). IMDS must be reachable locally."
+
+        throw $Exception
+
+    }
+
+    elseif ($statusCode -eq 404 -or $statusCode -eq 410) {
+
+        Write-MiDiagnostic `
+
+            -Code "MI-UAMI-007" `
+
+            -Context $Stage `
+
+            -Message "IMDS is temporarily unavailable or refreshing." `
+
+            -Detail "Status=$statusCode; Body=$bodyText" `
+
+            -Resolution "Retry in a few seconds. If persistent, restart the VM or check Azure host health."
+
+        throw $Exception
+
+    }
+
+    elseif ($statusCode -eq 429) {
+
+        Write-MiDiagnostic `
+
+            -Code "MI-UAMI-008" `
+
+            -Context $Stage `
+
+            -Message "IMDS throttled the token request." `
+
+            -Detail "Status=429; Body=$bodyText" `
+
+            -Resolution "Reduce repeated token requests. Cache tokens where possible and retry with backoff."
+
+        throw $Exception
+
+    }
+
+    elseif ($statusCode -ge 500) {
+
+        Write-MiDiagnostic `
+
+            -Code "MI-UAMI-009" `
+
+            -Context $Stage `
+
+            -Message "Azure managed identity endpoint returned a server-side failure." `
+
+            -Detail "Status=$statusCode; Body=$bodyText" `
+
+            -Resolution "Retry later. If persistent, check Azure platform health and VM host issues."
+
+        throw $Exception
+
+    }
+
+    else {
+
+        Write-MiDiagnostic `
+
+            -Code "MI-UAMI-010" `
+
+            -Context $Stage `
+
+            -Message "Unexpected IMDS failure while requesting a token for the UAMI." `
+
+            -Detail $msg `
+
+            -Resolution "Check VM identity assignment, local IMDS access, and whether the client ID is correct."
+
+        throw $Exception
+
+    }
+
+}
+
+
+
+function Test-UserAssignedManagedIdentity {
+
+    param(
+
+        [Parameter(Mandatory)][string]$ClientId,
+
+        [Parameter(Mandatory)][string]$TenantId
+
+    )
+
+
+
+    Write-Log "━━━ UAMI PRE-FLIGHT DIAGNOSTICS ━━━"
+
+
+
+    if ([string]::IsNullOrWhiteSpace($ClientId)) {
+
+        Write-MiDiagnostic `
+
+            -Code "MI-UAMI-001" `
+
+            -Context "UAMI validation" `
+
+            -Message "Automation Variable 'UserAssignedManagedIdentityClientId' is missing or empty." `
+
+            -Resolution "Create an Automation Variable named 'UserAssignedManagedIdentityClientId' and set it to the UAMI Client ID GUID."
+
+        throw "Missing Automation Variable: UserAssignedManagedIdentityClientId"
+
+    }
+
+
+
+    if (-not (Test-IsGuid $ClientId)) {
+
+        Write-MiDiagnostic `
+
+            -Code "MI-UAMI-002" `
+
+            -Context "UAMI validation" `
+
+            -Message "The configured UAMI Client ID is not a valid GUID." `
+
+            -Detail "Value='$ClientId'" `
+
+            -Resolution "Use the Client ID of the user-assigned managed identity (a GUID), not the display name or resource ID."
+
+        throw "Invalid UAMI Client ID format: $ClientId"
+
+    }
+
+
+
+    if (-not (Test-IsGuid $TenantId)) {
+
+        Write-MiDiagnostic `
+
+            -Code "MI-UAMI-003" `
+
+            -Context "Tenant validation" `
+
+            -Message "TargetTenantId is not a valid GUID." `
+
+            -Detail "Value='$TenantId'" `
+
+            -Resolution "Set the Automation Variable 'TargetTenantId' to the Azure/Entra tenant GUID."
+
+        throw "Invalid TargetTenantId format: $TenantId"
+
+    }
+
+
+
+    Write-Log " UAMI Client ID : $ClientId"
+
+    Write-Log " Target Tenant  : $TenantId"
+
+
+
+    $azCmd = Get-Command Connect-AzAccount -ErrorAction SilentlyContinue
+
+    if (-not $azCmd) {
+
+        Write-MiDiagnostic `
+
+            -Code "MI-UAMI-011" `
+
+            -Context "Az.Accounts capability check" `
+
+            -Message "Connect-AzAccount command was not found." `
+
+            -Resolution "Install/update Az.Accounts on the Hybrid Worker VM."
+
+        throw "Connect-AzAccount not found"
+
+    }
+
+
+
+    if (-not $azCmd.Parameters.ContainsKey("AccountId")) {
+
+        Write-MiDiagnostic `
+
+            -Code "MI-UAMI-012" `
+
+            -Context "Az.Accounts capability check" `
+
+            -Message "This Az.Accounts version does not support -AccountId for user-assigned managed identity sign-in." `
+
+            -Detail "Installed command does not expose parameter: AccountId" `
+
+            -Resolution "Update Az.Accounts to a newer version that supports: Connect-AzAccount -Identity -AccountId <UAMI ClientId>"
+
+        throw "Az.Accounts is too old for UAMI sign-in"
+
+    }
+
+
+
+    $mgCmd = Get-Command Connect-MgGraph -ErrorAction SilentlyContinue
+
+    if (-not $mgCmd) {
+
+        Write-MiDiagnostic `
+
+            -Code "MI-UAMI-013" `
+
+            -Context "Graph SDK capability check" `
+
+            -Message "Connect-MgGraph command was not found." `
+
+            -Resolution "Install/update Microsoft.Graph.Authentication on the Hybrid Worker VM."
+
+        throw "Connect-MgGraph not found"
+
+    }
+
+
+
+    if (-not $mgCmd.Parameters.ContainsKey("ClientId")) {
+
+        Write-MiDiagnostic `
+
+            -Code "MI-UAMI-014" `
+
+            -Context "Graph SDK capability check" `
+
+            -Message "This Microsoft Graph PowerShell version does not support -ClientId with -Identity for UAMI sign-in." `
+
+            -Detail "Installed command does not expose parameter: ClientId" `
+
+            -Resolution "Update Microsoft.Graph.Authentication to a newer version that supports: Connect-MgGraph -Identity -ClientId <UAMI ClientId>"
+
+        throw "Microsoft Graph module is too old for UAMI sign-in"
+
+    }
+
+
+
+    Write-Log " [UAMI Test 1] Requesting ARM token from IMDS..."
+
+    try {
+
+        $armToken = Get-ImdsToken -Resource "https://management.azure.com/" -ClientId $ClientId
+
+    }
+
+    catch {
+
+        Resolve-ImdsFailure -Stage "UAMI ARM token test" -Exception $_.Exception -ClientId $ClientId
+
+    }
+
+
+
+    if (-not $armToken.access_token) {
+
+        Write-MiDiagnostic `
+
+            -Code "MI-UAMI-015" `
+
+            -Context "UAMI ARM token test" `
+
+            -Message "IMDS returned no ARM access token." `
+
+            -Detail ($armToken | ConvertTo-Json -Depth 5) `
+
+            -Resolution "Confirm the VM has the UAMI assigned and IMDS is reachable."
+
+        throw "ARM token missing from IMDS response"
+
+    }
+
+
+
+    $armJwt = ConvertFrom-JwtPayload -Jwt $armToken.access_token
+
+    Write-Log "  ARM token acquired successfully."
+
+    if ($armJwt) {
+
+        Write-Log "   ARM appid     : $($armJwt.appid)"
+
+        Write-Log "   ARM oid       : $($armJwt.oid)"
+
+        Write-Log "   ARM tid       : $($armJwt.tid)"
+
+        Write-Log "   ARM aud       : $($armJwt.aud)"
+
+        Write-Log "   ARM xms_mirid : $($armJwt.xms_mirid)"
+
+        Write-Log "   ARM exp (UTC) : $([DateTimeOffset]::FromUnixTimeSeconds([int64]$armJwt.exp).UtcDateTime)"
+
+    }
+
+
+
+    if ($armJwt -and $armJwt.appid -and ($armJwt.appid -ne $ClientId)) {
+
+        Write-MiDiagnostic `
+
+            -Code "MI-UAMI-016" `
+
+            -Context "UAMI ARM token validation" `
+
+            -Message "The ARM token was issued for a different managed identity than the one requested." `
+
+            -Detail "Requested ClientId=$ClientId; Token appid=$($armJwt.appid)" `
+
+            -Resolution "Check that the correct UAMI Client ID is configured and that the VM does not have a conflicting MI selection issue."
+
+        throw "ARM token appid mismatch"
+
+    }
+
+
+
+    if ($armJwt -and $armJwt.tid -and ($armJwt.tid -ne $TenantId)) {
+
+        Write-MiDiagnostic `
+
+            -Code "MI-UAMI-017" `
+
+            -Context "UAMI ARM token validation" `
+
+            -Message "The ARM token tenant does not match TargetTenantId." `
+
+            -Detail "Token tid=$($armJwt.tid); TargetTenantId=$TenantId" `
+
+            -Resolution "Use the correct tenant ID for the UAMI/service principal, or attach the correct UAMI."
+
+        throw "ARM token tenant mismatch"
+
+    }
+
+
+
+    Write-Log " [UAMI Test 2] Requesting Microsoft Graph token from IMDS..."
+
+    try {
+
+        $graphToken = Get-ImdsToken -Resource "https://graph.microsoft.com/" -ClientId $ClientId
+
+    }
+
+    catch {
+
+        Resolve-ImdsFailure -Stage "UAMI Graph token test" -Exception $_.Exception -ClientId $ClientId
+
+    }
+
+
+
+    if (-not $graphToken.access_token) {
+
+        Write-MiDiagnostic `
+
+            -Code "MI-UAMI-018" `
+
+            -Context "UAMI Graph token test" `
+
+            -Message "IMDS returned no Microsoft Graph access token." `
+
+            -Detail ($graphToken | ConvertTo-Json -Depth 5) `
+
+            -Resolution "Confirm the VM has the UAMI assigned and that Graph token issuance is working."
+
+        throw "Graph token missing from IMDS response"
+
+    }
+
+
+
+    $graphJwt = ConvertFrom-JwtPayload -Jwt $graphToken.access_token
+
+    Write-Log "  Microsoft Graph token acquired successfully."
+
+    if ($graphJwt) {
+
+        Write-Log "   Graph appid     : $($graphJwt.appid)"
+
+        Write-Log "   Graph oid       : $($graphJwt.oid)"
+
+        Write-Log "   Graph tid       : $($graphJwt.tid)"
+
+        Write-Log "   Graph aud       : $($graphJwt.aud)"
+
+        if ($graphJwt.PSObject.Properties.Name -contains 'xms_mirid') {
+
+        Write-Log "   Graph xms_mirid : $($graphJwt.xms_mirid)"
+
+    }
+
+    else {
+
+        Write-Log "   Graph xms_mirid : <not present in token>" "WARN"
+
+    }
+
+
+
+        Write-Log "   Graph exp (UTC) : $([DateTimeOffset]::FromUnixTimeSeconds([int64]$graphJwt.exp).UtcDateTime)"
+
+    }
+
+
+
+    if ($graphJwt -and $graphJwt.appid -and ($graphJwt.appid -ne $ClientId)) {
+
+        Write-MiDiagnostic `
+
+            -Code "MI-UAMI-019" `
+
+            -Context "UAMI Graph token validation" `
+
+            -Message "The Graph token was issued for a different managed identity than the one requested." `
+
+            -Detail "Requested ClientId=$ClientId; Token appid=$($graphJwt.appid)" `
+
+            -Resolution "Check that the correct UAMI Client ID is configured and that the VM is using the intended UAMI."
+
+        throw "Graph token appid mismatch"
+
+    }
+
+
+
+    if ($graphJwt -and $graphJwt.tid -and ($graphJwt.tid -ne $TenantId)) {
+
+        Write-MiDiagnostic `
+
+            -Code "MI-UAMI-020" `
+
+            -Context "UAMI Graph token validation" `
+
+            -Message "The Graph token tenant does not match TargetTenantId." `
+
+            -Detail "Token tid=$($graphJwt.tid); TargetTenantId=$TenantId" `
+
+            -Resolution "Use the correct tenant ID for the UAMI/service principal, or attach the correct UAMI."
+
+        throw "Graph token tenant mismatch"
+
+    }
+
+
+
+    Write-Log " [UAMI Test 3] Calling Microsoft Graph /organization using the IMDS token..."
+
+    try {
+
+        $orgResult = Invoke-RestMethod `
+
+            -Uri "https://graph.microsoft.com/v1.0/organization?`$select=id,displayName" `
+
+            -Headers @{ Authorization = "Bearer $($graphToken.access_token)" } `
+
+            -Method GET `
+
+            -ErrorAction Stop
+
+
+
+        if ($orgResult.value.Count -gt 0) {
+
+            Write-Log "  Graph API probe OK: $($orgResult.value[0].displayName) [$($orgResult.value[0].id)]"
+
+        }
+
+        else {
+
+            Write-Log "  Graph API probe returned no organization objects." "WARN"
+
+        }
+
+    }
+
+    catch {
+
+        Write-MiDiagnostic `
+
+            -Code "MI-UAMI-021" `
+
+            -Context "UAMI Graph API probe" `
+
+            -Message "A Graph token was acquired, but a simple Graph API call failed." `
+
+            -Detail $_.Exception.Message `
+
+            -Resolution "The UAMI likely lacks required Microsoft Graph application permissions and/or admin consent. Also ensure the service principal has the necessary Entra role assignments (for example Global Reader if your assessment depends on it)."
+
+        throw $_
+
+    }
+
+
+
+    Write-Log "━━━ UAMI PRE-FLIGHT DIAGNOSTICS PASSED ━━━"
+
+}
+
+
+
+#endregion
+
 
 
 #region ── 0a. Hybrid Worker Diagnostics ──────────────────────────────────
+
 # The Automation Hybrid Worker service sometimes overrides PSModulePath.
+
 # We explicitly re-inject the standard AllUsers module paths here.
-$standardPaths = @("C:\ProgramData\ZtModules", "C:\Program Files\PowerShell\Modules", "C:\Program Files\WindowsPowerShell\Modules")
+
+$standardPaths = @(
+
+    "C:\ProgramData\ZtModules",
+
+    "C:\Program Files\PowerShell\Modules",
+
+    "C:\Program Files\WindowsPowerShell\Modules"
+
+)
+
+
+
 foreach ($sp in $standardPaths) {
+
     if ((Test-Path $sp) -and ($env:PSModulePath -notmatch [regex]::Escape($sp))) {
+
         $env:PSModulePath = "$sp;$env:PSModulePath"
+
     }
+
 }
 
+
+
 Write-Log "═══ HYBRID WORKER DIAGNOSTICS ═══"
-Write-Log "  Hostname     : $($env:COMPUTERNAME)"
-Write-Log "  PS Version   : $($PSVersionTable.PSVersion)"
-Write-Log "  OS           : $([System.Runtime.InteropServices.RuntimeInformation]::OSDescription)"
-Write-Log "  Date         : $today"
-Write-Log "  Temp Path    : $($env:TEMP)"
-Write-Log "  Module Paths : $($env:PSModulePath -replace ';', '; ')"
+
+Write-Log " Hostname     : $($env:COMPUTERNAME)"
+
+Write-Log " PS Version   : $($PSVersionTable.PSVersion)"
+
+Write-Log " OS           : $([System.Runtime.InteropServices.RuntimeInformation]::OSDescription)"
+
+Write-Log " Date         : $today"
+
+Write-Log " Temp Path    : $($env:TEMP)"
+
+Write-Log " Module Paths : $($env:PSModulePath -replace ';', '; ')"
+
 Write-Log "═══════════════════════════════════"
+
 #endregion
+
 
 
 #region ── 0b. Validate Local Module Availability ─────────────────────────
+
 Write-Log "━━━ STAGE 0: Validating local modules ━━━"
 
+
+
 $requiredModules = @(
+
     "Az.Accounts",
+
     "Az.Storage",
+
     "Az.ResourceGraph",
+
     "Az.Security",
+
     "Microsoft.Graph.Authentication",
+
     "Microsoft.Graph.Identity.DirectoryManagement",
+
     "Microsoft.Graph.Users",
+
     "Microsoft.Graph.Groups",
+
     "Microsoft.Graph.Applications",
+
     "Microsoft.Graph.DeviceManagement",
+
     "PSFramework",
+
     "ZeroTrustAssessment"
+
 )
 
+
+
 $missingModules = @()
+
+
+
 foreach ($mod in $requiredModules) {
-    $found = Get-Module -Name $mod -ListAvailable | Sort-Object Version -Descending | Select-Object -First 1
+
+    $found = Get-Module -Name $mod -ListAvailable |
+
+        Sort-Object Version -Descending |
+
+        Select-Object -First 1
+
+
+
     if ($found) {
-        Write-Log "  ✅ $mod ($($found.Version))"
+
+        Write-Log " ✅ $mod ($($found.Version))"
+
     }
+
     else {
-        Write-Log "  ❌ $mod — NOT FOUND" "ERROR"
+
+        Write-Log " ❌ $mod — NOT FOUND" "ERROR"
+
         $missingModules += $mod
+
     }
+
 }
+
+
 
 if ($missingModules.Count -gt 0) {
+
     Write-DiagnosticError `
-        -Context    "Stage 0 — Module validation" `
-        -Message    "$($missingModules.Count) required module(s) are not installed on this Hybrid Worker VM." `
-        -Detail     "Missing: $($missingModules -join ', ')" `
+
+        -Context "Stage 0 — Module validation" `
+
+        -Message "$($missingModules.Count) required module(s) are not installed on this Hybrid Worker VM." `
+
+        -Detail "Missing: $($missingModules -join ', ')" `
+
         -Resolution "RDP into the VM, open pwsh (PowerShell 7.x) and run: Save-Module -Name <module> -Path C:\ProgramData\ZtModules -Force. Or re-run Setup-HybridWorkerModules.ps1."
+
+
+
     throw "Missing modules: $($missingModules -join ', '). See Setup-HybridWorkerModules.ps1."
+
 }
 
+
+
 Write-Log "All $($requiredModules.Count) modules available."
+
 #endregion
+
 
 
 #region ── 1. Read Automation Variables ───────────────────────────────────
+
 Write-Log "━━━ STAGE 1: Reading Automation Variables ━━━"
 
+
+
 $authMethod = Get-AutomationVariable -Name "AuthMethod" -ErrorAction SilentlyContinue
+
 if (-not $authMethod) {
-    Write-Log "AuthMethod variable not found — defaulting to 'AppRegistration'." "WARN"
+
+    Write-Log "AuthMethod variable not found — defaulting to 'ManagedIdentity'." "WARN"
+
     Write-Log "To suppress this warning: create an Automation Variable named 'AuthMethod'." "WARN"
-    $authMethod = "AppRegistration"
+
+    $authMethod = "ManagedIdentity"
+
 }
+
+
 
 try {
+
     $storageAccountName = Get-AutomationVariable -Name "StorageAccountName" -ErrorAction Stop
-    $containerName      = Get-AutomationVariable -Name "BlobContainerName"  -ErrorAction Stop
-    $targetTenantId     = Get-AutomationVariable -Name "TargetTenantId"     -ErrorAction Stop
-}
-catch {
-    Write-DiagnosticError `
-        -Context    "Stage 1 — Reading core Automation Variables" `
-        -Message    "One or more required Automation Variables are missing." `
-        -Detail     $_.Exception.Message `
-        -Resolution "Ensure these variables exist in Automation Account > Shared Resources > Variables: StorageAccountName, BlobContainerName, TargetTenantId."
-    throw $_
+
+    $containerName      = Get-AutomationVariable -Name "BlobContainerName" -ErrorAction Stop
+
+    $targetTenantId     = Get-AutomationVariable -Name "TargetTenantId" -ErrorAction Stop
+
 }
 
-Write-Log "Auth Method      : $authMethod"
-Write-Log "Storage Account  : $storageAccountName"
-Write-Log "Blob Container   : $containerName"
-Write-Log "Target Tenant    : $targetTenantId"
+catch {
+
+    Write-DiagnosticError `
+
+        -Context "Stage 1 — Reading core Automation Variables" `
+
+        -Message "One or more required Automation Variables are missing." `
+
+        -Detail $_.Exception.Message `
+
+        -Resolution "Ensure these variables exist in Automation Account > Shared Resources > Variables: StorageAccountName, BlobContainerName, TargetTenantId."
+
+    throw $_
+
+}
+
+
+
+$uamiClientId = $null
+
+if ($authMethod -eq 'ManagedIdentity') {
+
+    $uamiClientId = Get-AutomationVariable -Name "UserAssignedManagedIdentityClientId" -ErrorAction SilentlyContinue
+
+
+
+    if ([string]::IsNullOrWhiteSpace($uamiClientId)) {
+
+        Write-MiDiagnostic `
+
+            -Code "MI-UAMI-001" `
+
+            -Context "Stage 1 — Reading Automation Variables" `
+
+            -Message "AuthMethod is 'ManagedIdentity' but Automation Variable 'UserAssignedManagedIdentityClientId' is missing." `
+
+            -Resolution "Create an Automation Variable named 'UserAssignedManagedIdentityClientId' and set it to the Client ID of the user-assigned managed identity attached to the Automation Account."
+
+
+
+        throw "Missing required Automation Variable: UserAssignedManagedIdentityClientId"
+
+    }
+
+}
+
 #endregion
+
 
 
 #region ── 2. Authenticate ────────────────────────────────────────────────
+
 Write-Log "━━━ STAGE 2: Authenticating ━━━"
 
+
+
 # ── WORKAROUND: Suppress WAM / interactive auth prompts ─────────────────
+
 # The Microsoft Graph SDK on Windows enables WAM (Web Account Manager) by default.
+
 # During long-running exports, token renewals can trigger interactive browser/WAM
+
 # popups which fail in a non-interactive runbook. These env vars force non-interactive only.
+
 Write-Log "Suppressing WAM and interactive authentication prompts..."
+
 $env:AZURE_IDENTITY_DISABLE_INTERACTIVEBROWSERCREDENTIAL = "true"
+
 $env:AZURE_IDENTITY_DISABLE_MULTITENANTAUTH = "true"
-# Disable the Visual Studio credential and Shared Token Cache to avoid
-# unexpected interactive flows on the Hybrid Worker VM.
+
 $env:AZURE_IDENTITY_DISABLE_VISUALSTUDIOCREDENTIAL = "true"
+
 $env:AZURE_IDENTITY_DISABLE_SHAREDTOKENCACHECREDENTIAL = "true"
 
+
+
 if ($authMethod -eq 'ManagedIdentity') {
-    Write-Log "Auth method: Managed Identity (VM's System-Assigned Identity)"
-    Write-Log "NOTE: On a Hybrid Worker, -Identity uses the VM's MI, not the Automation Account's."
-    try {
-        Connect-AzAccount -Identity | Out-Null
-        Write-Log "Connect-AzAccount (Managed Identity) — OK"
-    }
-    catch {
-        Write-DiagnosticError `
-            -Context    "Stage 2 — Connect-AzAccount (ManagedIdentity)" `
-            -Message    "Failed to authenticate to Azure using the VM's Managed Identity." `
-            -Detail     $_.Exception.Message `
-            -Resolution "Verify the VM has a System-Assigned Managed Identity enabled (VM > Identity tab). Assign 'Reader' role to the VM's MI on target subscriptions."
-        throw $_
-    }
+
+    Write-Log "Auth method: Managed Identity (User-Assigned Managed Identity on the Hybrid Worker VM)"
+
+    Write-Log "NOTE: On a Hybrid Worker, Managed Identity auth uses the VM's identity endpoint (IMDS), not the Automation Account identity."
+
+    Write-Log "NOTE: This runbook is configured to use a USER-ASSIGNED managed identity via Client ID."
+
+
+
+    # Fail fast with detailed diagnostics before using Az / Graph sign-in
+
+    Test-UserAssignedManagedIdentity -ClientId $uamiClientId -TenantId $targetTenantId
+
+
 
     try {
-        Connect-MgGraph -Identity -TenantId $targetTenantId -NoWelcome -ContextScope Process | Out-Null
-        Write-Log "Connect-MgGraph (Managed Identity) — OK"
+
+        $armToken   = Get-ImdsToken -Resource "https://management.azure.com/" -ClientId $uamiClientId
+
+        $graphToken = Get-ImdsToken -Resource "https://graph.microsoft.com/" -ClientId $uamiClientId
+
+
+
+        Connect-AzAccount `
+
+            -AccessToken $armToken.access_token `
+
+            -AccountId $uamiClientId `
+
+            -Tenant $targetTenantId `
+
+            -MicrosoftGraphAccessToken $graphToken.access_token | Out-Null
+
+
+
+        Write-Log "Connect-AzAccount (User-Assigned Managed Identity) — OK"
+
     }
+
     catch {
-        Write-DiagnosticError `
-            -Context    "Stage 2 — Connect-MgGraph (ManagedIdentity)" `
-            -Message    "Failed to authenticate to Microsoft Graph using the VM's Managed Identity." `
-            -Detail     $_.Exception.Message `
-            -Resolution "Assign 'Global Reader' role to the VM's Managed Identity in Entra ID > Roles and Administrators."
+
+        Write-MiDiagnostic `
+
+            -Code "MI-UAMI-022" `
+
+            -Context "Stage 2 — Connect-AzAccount (UserAssignedManagedIdentity)" `
+
+            -Message "Failed to authenticate to Azure using the user-assigned managed identity." `
+
+            -Detail $_.Exception.Message `
+
+            -Resolution "Confirm the UAMI is attached to the VM, the Client ID is correct, and the identity has RBAC such as 'Reader' on the target subscriptions."
+
         throw $_
+
     }
+
+
+
+    try {
+
+        $secureGraphToken = ConvertTo-SecureString $graphToken.access_token -AsPlainText -Force
+
+        Connect-MgGraph -AccessToken $secureGraphToken -NoWelcome | Out-Null
+
+        Write-Log "Connect-MgGraph (Graph access token) — OK"
+
+    }
+
+    catch {
+
+        Write-MiDiagnostic `
+
+            -Code "MI-UAMI-023" `
+
+            -Context "Stage 2 — Connect-MgGraph (AccessToken)" `
+
+            -Message "Failed to authenticate to Microsoft Graph using the IMDS-issued Graph access token." `
+
+            -Detail $_.Exception.Message `
+
+            -Resolution "Confirm the IMDS Graph token is valid and the managed identity has the required Microsoft Graph application permissions with admin consent."
+
+        throw $_
+
+    }
+
+
+
 }
+
 elseif ($authMethod -eq 'AppRegistration') {
+
     Write-Log "Auth method: App Registration (Service Principal)"
 
+
+
     try {
-        $appClientId     = Get-AutomationVariable -Name "AppClientId"     -ErrorAction Stop
+
+        $appClientId     = Get-AutomationVariable -Name "AppClientId" -ErrorAction Stop
+
         $appClientSecret = Get-AutomationVariable -Name "AppClientSecret" -ErrorAction Stop
+
     }
+
     catch {
+
         Write-DiagnosticError `
-            -Context    "Stage 2 — Reading AppRegistration Variables" `
-            -Message    "AppClientId or AppClientSecret Automation Variables are missing." `
-            -Detail     $_.Exception.Message `
+
+            -Context "Stage 2 — Reading AppRegistration Variables" `
+
+            -Message "AppClientId or AppClientSecret Automation Variables are missing." `
+
+            -Detail $_.Exception.Message `
+
             -Resolution "Create both variables in Automation Account > Variables. Mark AppClientSecret as Encrypted."
+
         throw $_
+
     }
+
+
 
     Write-Log "App Client ID: $appClientId"
 
+
+
     $secureSecret = ConvertTo-SecureString $appClientSecret -AsPlainText -Force
-    $cred         = New-Object System.Management.Automation.PSCredential($appClientId, $secureSecret)
+
+    $cred = New-Object System.Management.Automation.PSCredential($appClientId, $secureSecret)
+
+
 
     try {
+
         Connect-AzAccount -ServicePrincipal -Credential $cred -Tenant $targetTenantId | Out-Null
+
         Write-Log "Connect-AzAccount (App Registration) — OK"
-    }
-    catch {
-        Write-DiagnosticError `
-            -Context    "Stage 2 — Connect-AzAccount (AppRegistration)" `
-            -Message    "Failed to authenticate to Azure using the App Registration credentials." `
-            -Detail     $_.Exception.Message `
-            -Resolution "Verify AppClientId and AppClientSecret are correct. Check the secret has not expired."
-        throw $_
+
     }
 
-    try {
-        Connect-MgGraph -ClientSecretCredential $cred -TenantId $targetTenantId -NoWelcome -ContextScope Process | Out-Null
-        Write-Log "Connect-MgGraph (App Registration) — OK"
-    }
     catch {
+
         Write-DiagnosticError `
-            -Context    "Stage 2 — Connect-MgGraph (AppRegistration)" `
-            -Message    "Azure auth succeeded but Microsoft Graph auth failed." `
-            -Detail     $_.Exception.Message `
-            -Resolution "Assign 'Global Reader' role to the App Registration's service principal in Entra ID."
+
+            -Context "Stage 2 — Connect-AzAccount (AppRegistration)" `
+
+            -Message "Failed to authenticate to Azure using the App Registration credentials." `
+
+            -Detail $_.Exception.Message `
+
+            -Resolution "Verify AppClientId and AppClientSecret are correct. Check the secret has not expired."
+
         throw $_
+
     }
+
+
+
+    try {
+
+        Connect-MgGraph -ClientSecretCredential $cred -TenantId $targetTenantId -NoWelcome -ContextScope Process | Out-Null
+
+        Write-Log "Connect-MgGraph (App Registration) — OK"
+
+    }
+
+    catch {
+
+        Write-DiagnosticError `
+
+            -Context "Stage 2 — Connect-MgGraph (AppRegistration)" `
+
+            -Message "Azure auth succeeded but Microsoft Graph auth failed." `
+
+            -Detail $_.Exception.Message `
+
+            -Resolution "Assign 'Global Reader' role to the App Registration's service principal in Entra ID."
+
+        throw $_
+
+    }
+
 }
+
 else {
+
     Write-DiagnosticError `
-        -Context    "Stage 2 — Auth method validation" `
-        -Message    "AuthMethod variable has an unrecognised value: '$authMethod'." `
+
+        -Context "Stage 2 — Auth method validation" `
+
+        -Message "AuthMethod variable has an unrecognised value: '$authMethod'." `
+
         -Resolution "Update the AuthMethod Automation Variable to either 'AppRegistration' or 'ManagedIdentity' (case-sensitive)."
+
     throw "Invalid AuthMethod: '$authMethod'."
+
 }
+
 #endregion
 
 
-#region ── 2b. Discover subscriptions ────────────────────────────────────
+
+#region ── 2b. Discover subscriptions ─────────────────────────────────────
+
 Write-Log "━━━ STAGE 2b: Discovering Subscriptions ━━━"
 
+
+
 try {
+
     $allSubs = Get-AzSubscription -TenantId $targetTenantId -ErrorAction Stop |
-               Where-Object { $_.State -eq 'Enabled' }
+
+        Where-Object { $_.State -eq 'Enabled' }
+
 }
+
 catch {
+
     Write-DiagnosticError `
-        -Context    "Stage 2b — Get-AzSubscription" `
-        -Message    "Failed to list subscriptions. The identity may lack permission." `
-        -Detail     $_.Exception.Message `
-        -Resolution "Assign 'Reader' role to the identity at Management Group or subscription level."
+
+        -Context "Stage 2b — Get-AzSubscription" `
+
+        -Message "Failed to list subscriptions. The identity may lack permission." `
+
+        -Detail $_.Exception.Message `
+
+        -Resolution "Assign the 'Reader' role to the identity at Management Group or subscription scope."
+
     throw $_
+
 }
+
+
 
 $targetSubscriptionIds = @($allSubs | ForEach-Object { $_.Id })
 
+
+
 if ($targetSubscriptionIds.Count -eq 0) {
+
     $rbacMsg = if ($authMethod -eq 'AppRegistration') {
-        "The App Registration service principal '$appClientId' has no 'Reader' RBAC role " +
-        "assigned on any subscription in tenant '$targetTenantId'. " +
-        "Fix: Azure Portal > Subscriptions > Access Control (IAM) > Add role assignment > Reader."
-    } else {
-        "The VM's Managed Identity has no 'Reader' RBAC role assigned on any subscription. " +
-        "Fix: Azure Portal > Subscriptions > Access Control (IAM) > Add role assignment > Reader > " +
-        "assign to the VM's Managed Identity (search by VM name)."
+
+        "The App Registration service principal '$appClientId' has no 'Reader' RBAC role assigned on any subscription in tenant '$targetTenantId'. Fix: Azure Portal → Subscriptions → Access Control (IAM) → Add role assignment → Reader."
+
     }
 
+    else {
+
+        "The VM user-assigned managed identity has no 'Reader' RBAC role assigned on any subscription. Fix: Azure Portal → Subscriptions → Access Control (IAM) → Add role assignment → Reader → assign it to the Hybrid Worker VM user-assigned managed identity."
+
+    }
+
+
+
     Write-DiagnosticError `
-        -Context    "Stage 2b — Subscription discovery" `
-        -Message    "No enabled subscriptions found in tenant '$targetTenantId'." `
+
+        -Context "Stage 2b — Subscription discovery" `
+
+        -Message "No enabled subscriptions found in tenant '$targetTenantId'." `
+
         -Resolution $rbacMsg
+
+
+
     throw "No enabled subscriptions found in tenant '$targetTenantId'. $rbacMsg"
+
 }
 
+
+
 Write-Log "Found $($targetSubscriptionIds.Count) enabled subscription(s):"
+
 foreach ($s in $allSubs) {
-    Write-Log "  • $($s.Name) [$($s.Id)]"
+
+    Write-Log " • $($s.Name) [$($s.Id)]"
+
 }
+
 #endregion
 
 
-#region ── 2c. Pre-flight Permission Validation ────────────────────────────
+
+#region ── 2c. Pre-flight Permission Validation ───────────────────────────
+
 Write-Log "━━━ STAGE 2c: Pre-flight Permission Checks ━━━"
+
 Write-Log "Validating permissions BEFORE the long-running assessment to fail fast..."
 
+
+
 # ── Check 1: Microsoft Graph API Permissions ─────────────────────────────
-Write-Log "  [Check 1] Validating Microsoft Graph API permissions..."
+
+Write-Log " [Check 1] Validating Microsoft Graph API permissions..."
+
+
 
 $requiredGraphScopes = @(
+
     'AuditLog.Read.All'
+
     'CrossTenantInformation.ReadBasic.All'
+
     'DeviceManagementApps.Read.All'
+
     'DeviceManagementConfiguration.Read.All'
+
     'DeviceManagementManagedDevices.Read.All'
+
     'DeviceManagementRBAC.Read.All'
+
     'DeviceManagementServiceConfig.Read.All'
+
     'Directory.Read.All'
+
     'DirectoryRecommendations.Read.All'
+
     'EntitlementManagement.Read.All'
+
     'IdentityRiskEvent.Read.All'
+
     'IdentityRiskyUser.Read.All'
+
     'Policy.Read.All'
+
     'Policy.Read.ConditionalAccess'
+
     'Policy.Read.PermissionGrant'
+
     'PrivilegedAccess.Read.AzureAD'
+
     'Reports.Read.All'
+
     'RoleManagement.Read.All'
+
     'UserAuthenticationMethod.Read.All'
+
 )
 
-try {
-    $mgContext = Get-MgContext -ErrorAction Stop
-    if (-not $mgContext) {
-        throw "No active Microsoft Graph session found."
-    }
-    Write-Log "  Graph context: AuthType=$($mgContext.AuthType), TenantId=$($mgContext.TenantId), ClientId=$($mgContext.ClientId)"
 
-    # For app-only auth, $context.Scopes is usually just '.default'.
-    # We query the service principal's actual appRoleAssignments to verify permissions.
+
+try {
+
+    $mgContext = Get-MgContext -ErrorAction Stop
+
+    if (-not $mgContext) {
+
+        throw "No active Microsoft Graph session found."
+
+    }
+
+
+
+    Write-Log " Graph context: AuthType=$($mgContext.AuthType), TenantId=$($mgContext.TenantId), ClientId=$($mgContext.ClientId)"
+
+
+
+    # For app-only auth, $mgContext.Scopes is usually just '.default'.
+
+    # Query the service principal's appRoleAssignments to verify Graph application permissions.
+
     if ($mgContext.AuthType -ne 'Delegated') {
-        Write-Log "  App-only auth detected — checking appRoleAssignments on the service principal..."
+
+        Write-Log " App-only auth detected — checking appRoleAssignments on the service principal..."
+
+
+
         try {
-            # Find the service principal for our app
-            $spResult = Invoke-MgGraphRequest -Uri "https://graph.microsoft.com/v1.0/servicePrincipals?`$filter=appId eq '$($mgContext.ClientId)'&`$select=id" -Method GET -ErrorAction Stop
+
+            $clientId = $mgContext.ClientId
+
+
+
+            # Build URIs separately to avoid parser/copy-paste issues
+
+            $spLookupUri = "https://graph.microsoft.com/v1.0/servicePrincipals?`$filter=appId eq '$clientId'&`$select=id,displayName,appId"
+
+            $graphSpLookupUri = "https://graph.microsoft.com/v1.0/servicePrincipals?`$filter=appId eq '00000003-0000-0000-c000-000000000000'&`$select=id,appRoles"
+
+
+
+            # Find the service principal for our app / managed identity
+
+            $spResult = Invoke-MgGraphRequest -Uri $spLookupUri -Method GET -ErrorAction Stop
+
+
+
+            if (-not $spResult.value -or $spResult.value.Count -eq 0) {
+
+                throw "Service principal not found for appId '$clientId'."
+
+            }
+
+
+
             $spId = $spResult.value[0].id
-            if (-not $spId) { throw "Service principal not found for appId '$($mgContext.ClientId)'." }
+
+            $spDisplayName = $spResult.value[0].displayName
+
+
+
+            if (-not $spId) {
+
+                throw "Service principal ID was empty for appId '$clientId'."
+
+            }
+
+
+
+            Write-Log " Service principal resolved: $spDisplayName [$spId]"
+
+
 
             # Get the Microsoft Graph resource service principal
-            $graphSpResult = Invoke-MgGraphRequest -Uri "https://graph.microsoft.com/v1.0/servicePrincipals?`$filter=appId eq '00000003-0000-0000-c000-000000000000'&`$select=id,appRoles" -Method GET -ErrorAction Stop
+
+            $graphSpResult = Invoke-MgGraphRequest -Uri $graphSpLookupUri -Method GET -ErrorAction Stop
+
+
+
+            if (-not $graphSpResult.value -or $graphSpResult.value.Count -eq 0) {
+
+                throw "Microsoft Graph service principal could not be resolved."
+
+            }
+
+
+
             $graphSpId = $graphSpResult.value[0].id
+
             $graphAppRoles = $graphSpResult.value[0].appRoles
 
-            # Get our app's role assignments to MS Graph
-            $roleAssignments = Invoke-MgGraphRequest -Uri "https://graph.microsoft.com/v1.0/servicePrincipals/$spId/appRoleAssignments?`$filter=resourceId eq $graphSpId&`$top=200" -Method GET -ErrorAction Stop
 
-            # Build a lookup: roleId → roleName
-            $roleIdToName = @{}
-            foreach ($role in $graphAppRoles) {
-                $roleIdToName[$role.id] = $role.value
+
+            if (-not $graphSpId) {
+
+                throw "Microsoft Graph service principal ID was empty."
+
             }
+
+
+
+            # Get our app/service principal role assignments to Microsoft Graph
+
+            $roleAssignmentsUri = "https://graph.microsoft.com/v1.0/servicePrincipals/$spId/appRoleAssignments?`$filter=resourceId eq $graphSpId&`$top=200"
+
+            $roleAssignments = Invoke-MgGraphRequest -Uri $roleAssignmentsUri -Method GET -ErrorAction Stop
+
+
+
+            # Build a lookup: roleId -> roleName
+
+            $roleIdToName = @{}
+
+            foreach ($role in $graphAppRoles) {
+
+                $roleIdToName[$role.id] = $role.value
+
+            }
+
+
 
             $grantedScopes = @()
+
             foreach ($assignment in $roleAssignments.value) {
+
                 $roleName = $roleIdToName[$assignment.appRoleId]
-                if ($roleName) { $grantedScopes += $roleName }
+
+                if ($roleName) {
+
+                    $grantedScopes += $roleName
+
+                }
+
             }
+
+
+
+            $grantedScopes = @($grantedScopes | Sort-Object -Unique)
 
             $missingScopes = @($requiredGraphScopes | Where-Object { $grantedScopes -notcontains $_ })
 
+
+
             if ($missingScopes.Count -gt 0) {
-                $appId = $mgContext.ClientId
-                $entraUrl = "https://entra.microsoft.com/#view/Microsoft_AAD_RegisteredApps/ApplicationMenuBlade/~/CallAnAPI/appId/$appId/isMSAApp~/false"
+
+                $entraUrl = "https://entra.microsoft.com/#view/Microsoft_AAD_RegisteredApps/ApplicationMenuBlade/~/CallAnAPI/appId/$clientId/isMSAApp~/false"
+
+
+
+                $principalLabel = if ($authMethod -eq 'ManagedIdentity') {
+
+                    "user-assigned managed identity service principal"
+
+                }
+
+                else {
+
+                    "App Registration service principal"
+
+                }
+
+
+
                 Write-DiagnosticError `
-                    -Context    "Stage 2c — Graph API permissions" `
-                    -Message    "$($missingScopes.Count) required Microsoft Graph Application permission(s) are NOT granted to this App Registration." `
-                    -Detail     "Missing: $($missingScopes -join ', ')" `
-                    -Resolution "1. Open $entraUrl `n2. Add the missing Application permissions listed above. `n3. Click 'Grant admin consent'. `n4. Wait 5 minutes for propagation, then re-run."
+
+                    -Context "Stage 2c — Graph API permissions" `
+
+                    -Message "$($missingScopes.Count) required Microsoft Graph Application permission(s) are NOT granted to this $principalLabel." `
+
+                    -Detail "Missing: $($missingScopes -join ', ')" `
+
+                    -Resolution "Open the identity in Entra ID, add the missing Microsoft Graph Application permissions, grant admin consent, wait 5 minutes for propagation, then re-run. Reference: $entraUrl"
+
+
+
                 throw "Pre-flight failed: $($missingScopes.Count) missing Graph permission(s): $($missingScopes -join ', ')"
+
             }
 
-            Write-Log "  ✅ All $($requiredGraphScopes.Count) required Graph API permissions are granted."
-            Write-Log "     Granted permissions: $($grantedScopes.Count) total"
+
+
+            Write-Log " ✅ All $($requiredGraphScopes.Count) required Graph API permissions are granted."
+
+            Write-Log " Granted permissions: $($grantedScopes.Count) total"
+
         }
+
         catch {
+
             if ($_.Exception.Message -like '*Pre-flight failed*') { throw $_ }
-            Write-Log "  [WARN] Could not enumerate appRoleAssignments (non-fatal): $($_.Exception.Message)" "WARN"
-            Write-Log "  Falling back to Graph data probe to verify access..." "WARN"
+
+
+
+            Write-Log " [WARN] Could not enumerate appRoleAssignments (non-fatal): $($_.Exception.Message)" "WARN"
+
+            Write-Log " Falling back to Graph data probe to verify access..." "WARN"
+
         }
+
     }
+
     else {
+
         # Delegated auth — check scopes directly
+
         $currentScopes = $mgContext.Scopes
+
         $missingScopes = @($requiredGraphScopes | Where-Object { $currentScopes -notcontains $_ })
+
+
+
         if ($missingScopes.Count -gt 0) {
+
             Write-DiagnosticError `
-                -Context    "Stage 2c — Graph API scopes (Delegated)" `
-                -Message    "$($missingScopes.Count) required Graph scope(s) are missing from the current session." `
-                -Detail     "Missing: $($missingScopes -join ', ')" `
-                -Resolution "Re-authenticate with: Connect-MgGraph -Scopes (Get-ZtGraphScope)"
+
+                -Context "Stage 2c — Graph API scopes (Delegated)" `
+
+                -Message "$($missingScopes.Count) required Graph scope(s) are missing from the current session." `
+
+                -Detail "Missing: $($missingScopes -join ', ')" `
+
+                -Resolution "Re-authenticate with the required Graph scopes, for example using Connect-MgGraph -Scopes (Get-ZtGraphScope)."
+
+
+
             throw "Pre-flight failed: $($missingScopes.Count) missing Graph scope(s)."
+
         }
-        Write-Log "  ✅ All $($requiredGraphScopes.Count) required Graph scopes present in session."
+
+
+
+        Write-Log " ✅ All $($requiredGraphScopes.Count) required Graph scopes present in session."
+
     }
+
 }
+
 catch {
+
     if ($_.Exception.Message -like '*Pre-flight failed*') { throw $_ }
+
+
+
     Write-DiagnosticError `
-        -Context    "Stage 2c — Graph context validation" `
-        -Message    "Failed to validate Microsoft Graph session." `
-        -Detail     $_.Exception.Message `
+
+        -Context "Stage 2c — Graph context validation" `
+
+        -Message "Failed to validate Microsoft Graph session." `
+
+        -Detail $_.Exception.Message `
+
         -Resolution "Check that Stage 2 authentication completed successfully."
+
     throw $_
+
 }
+
+
 
 # ── Check 2: Graph Data Probe ────────────────────────────────────────────
-Write-Log "  [Check 2] Probing Microsoft Graph API with a lightweight request..."
+
+Write-Log " [Check 2] Probing Microsoft Graph API with a lightweight request..."
+
+
+
 try {
+
     $probeResult = Invoke-MgGraphRequest -Uri "https://graph.microsoft.com/v1.0/organization" -Method GET -ErrorAction Stop
+
+
+
     if (-not $probeResult.value -or $probeResult.value.Count -eq 0) {
+
         throw "Graph returned empty organization data."
+
     }
+
+
+
     $orgName = $probeResult.value[0].displayName
-    Write-Log "  ✅ Graph API probe succeeded — Organization: $orgName"
+
+    Write-Log " ✅ Graph API probe succeeded — Organization: $orgName"
+
 }
+
 catch {
+
     Write-DiagnosticError `
-        -Context    "Stage 2c — Graph data probe" `
-        -Message    "Authenticated to Graph but cannot read tenant data." `
-        -Detail     $_.Exception.Message `
-        -Resolution "The identity may lack 'Directory.Read.All' or the 'Global Reader' Entra ID role. Check API permissions and admin consent."
+
+        -Context "Stage 2c — Graph data probe" `
+
+        -Message "Authenticated to Graph but cannot read tenant data." `
+
+        -Detail $_.Exception.Message `
+
+        -Resolution "The identity may lack Directory.Read.All, required Microsoft Graph application permissions, admin consent, or the needed Entra role assignment such as Global Reader."
+
     throw $_
+
 }
+
+
 
 # ── Check 3: Storage Write Probe ─────────────────────────────────────────
+
 # (Runs after Stage 3 discovers the storage account — we insert a deferred check there.)
-# For now, mark pre-flight Graph checks as complete.
 
-Write-Log "  All pre-flight permission checks passed (Graph). Storage will be verified in Stage 3."
+Write-Log " All pre-flight permission checks passed (Graph). Storage will be verified in Stage 3."
+
 #endregion
 
 
-#region ── 3. Discover Storage Account ───────────────────────────────────
-Write-Log "━━━ STAGE 3: Discovering Storage Account '$storageAccountName' ━━━"
+#region ── 3. Connect to Storage Account ─────────────────────────────────
+Write-Log "━━━ STAGE 3: Connecting to Storage Account ━━━"
 
-$storageAcctQuery = @"
-Resources
-| where type =~ 'microsoft.storage/storageaccounts'
-| where name =~ '$storageAccountName'
-| project subscriptionId, resourceGroup, name
-"@
+# $azureSubscriptionId  — the subscription that hosts the storage account.
+# It is also used later in the per-subscription loop to reset Az context
+# back to the "home" subscription after temporarily switching to each
+# target subscription for Defender / governance queries.
 
 try {
-    $storageAcctResult = Search-AzGraph -Query $storageAcctQuery -First 1 -ErrorAction Stop
-}
-catch {
-    Write-DiagnosticError `
-        -Context    "Stage 3 — Search-AzGraph for storage account" `
-        -Message    "Azure Resource Graph query failed." `
-        -Detail     $_.Exception.Message `
-        -Resolution "Confirm Az.ResourceGraph module is installed. Confirm the identity has 'Reader' on the subscription containing the storage account."
-    throw $_
-}
+    Write-Log " Searching for storage account '$storageAccountName' across all accessible subscriptions..."
 
-if (-not $storageAcctResult -or $storageAcctResult.Data.Count -eq 0) {
-    Write-DiagnosticError `
-        -Context    "Stage 3 — Storage account lookup" `
-        -Message    "Storage account '$storageAccountName' was not found via Azure Resource Graph." `
-        -Resolution "1. Verify StorageAccountName variable is spelled correctly. " +
-                    "2. Confirm the identity has 'Reader' on the subscription containing the storage account."
-    throw "Storage account '$storageAccountName' not found."
-}
+    $storageAccount = $null
 
-$azureSubscriptionId = $storageAcctResult.Data[0].subscriptionId
-$storageAccountRG    = $storageAcctResult.Data[0].resourceGroup
-Write-Log "Found storage account in sub: $azureSubscriptionId (RG: $storageAccountRG)"
+    foreach ($sub in $allSubs) {
+        try {
+            Set-AzContext -SubscriptionId $sub.Id -ErrorAction Stop | Out-Null
+            $found = Get-AzStorageAccount -ErrorAction Stop |
+                Where-Object { $_.StorageAccountName -eq $storageAccountName } |
+                Select-Object -First 1
 
-try {
-    Set-AzContext -SubscriptionId $azureSubscriptionId | Out-Null
-    $storageAccountObj = Get-AzStorageAccount -ResourceGroupName $storageAccountRG -Name $storageAccountName -ErrorAction Stop
-    $ctx               = $storageAccountObj.Context
-    Write-Log "Storage context obtained — OK"
-}
-catch {
-    Write-DiagnosticError `
-        -Context    "Stage 3 — Get-AzStorageAccount" `
-        -Message    "Found the storage account but could not retrieve its context." `
-        -Detail     $_.Exception.Message `
-        -Resolution "Assign 'Storage Blob Data Contributor' to the identity on the storage account."
-    throw $_
-}
-
-# ── Pre-flight Check 3 (deferred): Storage write probe ───────────────────
-Write-Log "  [Pre-flight Check 3] Testing storage write access..."
-try {
-    $probeBlob   = "_preflight-check.json"
-    $probeData   = '{"check":"preflight","ts":"' + $today + '"}'
-    $probeBytes  = [System.Text.Encoding]::UTF8.GetBytes($probeData)
-    $probeStream = [System.IO.MemoryStream]::new($probeBytes)
-    try {
-        Set-AzStorageBlobContent `
-            -Container   $containerName `
-            -Blob        $probeBlob `
-            -BlobType    Block `
-            -Stream      $probeStream `
-            -ContentType "application/json" `
-            -Context     $ctx `
-            -Force | Out-Null
-    }
-    finally {
-        $probeStream.Dispose()
+            if ($found) {
+                $storageAccount     = $found
+                $azureSubscriptionId = $sub.Id
+                Write-Log " Found storage account in subscription: $($sub.Name) [$($sub.Id)]"
+                break
+            }
+        }
+        catch {
+            Write-Log " [WARN] Could not query storage accounts in subscription $($sub.Id): $($_.Exception.Message)" "WARN"
+        }
     }
 
-    # Clean up the probe blob
-    Remove-AzStorageBlob -Container $containerName -Blob $probeBlob -Context $ctx -Force -ErrorAction SilentlyContinue | Out-Null
-    Write-Log "  ✅ Storage write probe succeeded — 'Storage Blob Data Contributor' confirmed."
+    if (-not $storageAccount) {
+        Write-DiagnosticError `
+            -Context "Stage 3 — Storage account discovery" `
+            -Message "Storage account '$storageAccountName' was not found in any accessible subscription." `
+            -Detail "Searched $($allSubs.Count) subscription(s): $($allSubs.Id -join ', ')" `
+            -Resolution "1. Confirm the 'StorageAccountName' Automation Variable is correct. 2. Ensure the UAMI has at least 'Reader' RBAC on the subscription that contains the storage account."
+        throw "Storage account '$storageAccountName' not found in any accessible subscription."
+    }
+
+    # Pin Az context to the storage account's subscription
+    Set-AzContext -SubscriptionId $azureSubscriptionId -ErrorAction Stop | Out-Null
+
+    # Build an OAuth-based storage context — no account key needed.
+    # This relies on the UAMI having 'Storage Blob Data Contributor' on
+    # the storage account or container.
+    $ctx = New-AzStorageContext `
+        -StorageAccountName $storageAccountName `
+        -UseConnectedAccount `
+        -ErrorAction Stop
+
+    Write-Log " Storage account  : $storageAccountName"
+    Write-Log " Storage sub ID   : $azureSubscriptionId"
+    Write-Log " Storage context  : OK (OAuth / UAMI)"
+
+    # Ensure the target container exists; create it if not
+    $containerCheck = Get-AzStorageContainer -Name $containerName -Context $ctx -ErrorAction SilentlyContinue
+    if (-not $containerCheck) {
+        Write-Log " Container '$containerName' does not exist — creating it..." "WARN"
+        New-AzStorageContainer -Name $containerName -Context $ctx -Permission Off -ErrorAction Stop | Out-Null
+        Write-Log " Container '$containerName' created."
+    }
+    else {
+        Write-Log " Container '$containerName' exists — OK."
+    }
 }
 catch {
     Write-DiagnosticError `
-        -Context    "Stage 3 — Storage write pre-flight" `
-        -Message    "Cannot write blobs to container '$containerName' in storage account '$storageAccountName'." `
-        -Detail     $_.Exception.Message `
-        -Resolution "Assign 'Storage Blob Data Contributor' role to the identity on the storage account. " +
-                    "Azure Portal > Storage Account > Access Control (IAM) > Add role assignment."
+        -Context "Stage 3 — Storage Account connection" `
+        -Message "Failed to connect to storage account '$storageAccountName'." `
+        -Detail $_.Exception.Message `
+        -Resolution "1. Confirm 'StorageAccountName' Automation Variable is correct. 2. Assign 'Storage Blob Data Contributor' on the storage account to the UAMI. 3. Assign 'Reader' on the subscription hosting the storage account."
     throw $_
 }
 
-Write-Log "━━━ All pre-flight checks PASSED — safe to proceed with long-running assessment ━━━"
+# ── Storage Write Probe (deferred from Stage 2c) ─────────────────────────
+Write-Log " [Check 3] Probing storage write access..."
+try {
+    $probeContent = "{`"probe`":`"ok`",`"ts`":`"$((Get-Date).ToString('o'))`"}"
+    $probeTempFile = Write-TempUtf8File -Content $probeContent -Extension ".json"
+
+    Set-AzStorageBlobContent `
+        -Container $containerName `
+        -Blob      "probe/write-test.json" `
+        -File      $probeTempFile `
+        -Context   $ctx `
+        -Force     | Out-Null
+
+    Remove-Item $probeTempFile -Force -ErrorAction SilentlyContinue
+
+    Write-Log " ✅ Storage write probe succeeded — container '$containerName' is writable."
+}
+catch {
+    Write-DiagnosticError `
+        -Context "Stage 3 — Storage write probe" `
+        -Message "Cannot write to container '$containerName' in storage account '$storageAccountName'." `
+        -Detail $_.Exception.Message `
+        -Resolution "Assign 'Storage Blob Data Contributor' to the UAMI on the storage account or the specific container."
+    throw $_
+}
 #endregion
+
 
 
 #region ── 4. Run Zero Trust Assessment ───────────────────────────────────
+
 Write-Log "━━━ STAGE 4: Running Zero Trust Assessment ━━━"
 
+
+
 $reportPath = Join-Path $env:TEMP "ZTReport-$today"
+
 if (Test-Path $reportPath) {
+
     Write-Log "Removing stale report folder from previous run..."
+
     Remove-Item -Path $reportPath -Recurse -Force
+
 }
 
-    # We skip Connect-ZtAssessment here because Stage 2 already authenticated to Microsoft Graph.
-    # Calling Connect-MgGraph again (which Connect-ZtAssessment does) on a Windows Hybrid Worker
-    # triggers an interactive WAM (Web Account Manager) prompt, causing the script to hang or fail.
-    Write-Log "ZeroTrustAssessment module will use the Graph session established in Stage 2."
 
-    # ── WORKAROUND: DuckDB Memory Limit in Hybrid Workers ────────────────
-    # Hybrid Workers sometimes run under memory limits (e.g. 32-bit process constraints).
-    # DuckDB will crash if it attempts to allocate >800MB when reading large JSON reports.
-    # We use DuckDB's native initialization file (~/.duckdbrc) to safely cap its memory globally.
-    Write-Log "Configuring DuckDB memory limits via ~/.duckdbrc..."
-    $duckdbrcPath = Join-Path $env:USERPROFILE ".duckdbrc"
-    "SET max_memory='500MB';" | Out-File -FilePath $duckdbrcPath -Encoding ascii -Force
 
-    # ── WORKAROUND: Graph API Stream Failures ────────────────────────────
-    # Prevent "Error while copying content to a stream" during large exports
-    # by forcing the Microsoft Graph PowerShell SDK to use HTTP/1.1 instead of HTTP/2.
-    Write-Log "Configuring Microsoft Graph to use HTTP/1.1 to prevent stream errors..."
-    $env:MicrosoftGraphHttpVersion = "HTTP11"
+# We skip Connect-ZtAssessment here because Stage 2 already authenticated to Microsoft Graph.
 
-    # ── WORKAROUND: Override Test-ZtContext for app-only auth ────────────
-    # Invoke-ZtAssessment internally calls Test-ZtContext which:
-    #   1. Checks $context.Scopes — but for app-only auth this is just '.default',
-    #      causing a false 'missing scopes' error even when all permissions are granted.
-    #   2. Calls /me/transitiveMemberOf — a delegated-only endpoint that fails for
-    #      service principals (though guarded behind AuthType check).
-    # Since Stage 2c already exhaustively validated all permissions, we override
-    # Test-ZtContext to return $true and skip these inapplicable checks.
-    Write-Log "Overriding Test-ZtContext for app-only auth (permissions already validated in Stage 2c)..."
-    function global:Test-ZtContext { return $true }
+# Calling Connect-MgGraph again (which Connect-ZtAssessment does) on a Windows Hybrid Worker
+
+# triggers an interactive WAM (Web Account Manager) prompt, causing the script to hang or fail.
+
+Write-Log "ZeroTrustAssessment module will use the Graph session established in Stage 2."
+
+
+
+# ── WORKAROUND: DuckDB Memory Limit in Hybrid Workers ────────────────────
+
+# Hybrid Workers sometimes run under memory limits (e.g. 32-bit process constraints).
+
+# DuckDB will crash if it attempts to allocate >800MB when reading large JSON reports.
+
+# We use DuckDB's native initialization file (~/.duckdbrc) to safely cap its memory globally.
+
+Write-Log "Configuring DuckDB memory limits via ~/.duckdbrc..."
+
+$duckdbrcPath = Join-Path $env:USERPROFILE ".duckdbrc"
+
+"SET max_memory='500MB';" | Out-File -FilePath $duckdbrcPath -Encoding ascii -Force
+
+
+
+# ── WORKAROUND: Graph API Stream Failures ────────────────────────────────
+
+# Prevent "Error while copying content to a stream" during large exports
+
+# by forcing the Microsoft Graph PowerShell SDK to use HTTP/1.1 instead of HTTP/2.
+
+Write-Log "Configuring Microsoft Graph to use HTTP/1.1 to prevent stream errors..."
+
+$env:MicrosoftGraphHttpVersion = "HTTP11"
+
+
+
+# ── WORKAROUND: Override Test-ZtContext for app-only auth ───────────────
+
+# Invoke-ZtAssessment internally calls Test-ZtContext which:
+
+# 1. Checks $context.Scopes — but for app-only auth this is just '.default',
+
+#    causing a false 'missing scopes' error even when all permissions are granted.
+
+# 2. Calls /me/transitiveMemberOf — a delegated-only endpoint that fails for
+
+#    service principals (though guarded behind AuthType check).
+
+# Since Stage 2c already exhaustively validated all permissions, we override
+
+# Test-ZtContext to return $true and skip these inapplicable checks.
+
+Write-Log "Overriding Test-ZtContext for app-only auth (permissions already validated in Stage 2c)..."
+
+function global:Test-ZtContext { return $true }
+
+
 
 try {
+
     Write-Log "Configuring Microsoft Graph client timeout to 4 hours (14400s) for massive enterprise exports..."
+
     Set-MgRequestContext -ClientTimeout 14400 -ErrorAction SilentlyContinue
 
+
+
     Write-Log "Running Invoke-ZtAssessment (Path: $reportPath, Days: 30)..."
+
     Invoke-ZtAssessment -Path $reportPath -Days 30 -DisableTelemetry
+
     Write-Log "Invoke-ZtAssessment — completed"
+
 }
+
 catch {
+
     Write-DiagnosticError `
-        -Context    "Stage 4 — Invoke-ZtAssessment" `
-        -Message    "The Zero Trust Assessment cmdlet threw an error." `
-        -Detail     $_.Exception.Message `
-        -Resolution "1. Check the identity has 'Global Reader' in Entra ID. " +
-                    "2. Check Microsoft.Graph.* modules are installed. " +
-                    "3. If first run, check Entra ID > Enterprise Applications for consent."
+
+        -Context "Stage 4 — Invoke-ZtAssessment" `
+
+        -Message "The Zero Trust Assessment cmdlet threw an error." `
+
+        -Detail $_.Exception.Message `
+
+        -Resolution "1. Check the identity has 'Global Reader' in Entra ID. 2. Check Microsoft.Graph.* modules are installed. 3. If first run, check Entra ID > Enterprise Applications for consent."
+
     throw $_
+
 }
+
+
 
 $reportJsonPath = Join-Path $reportPath "zt-export" "ZeroTrustAssessmentReport.json"
+
+
+
 if (-not (Test-Path $reportJsonPath)) {
+
     Write-DiagnosticError `
-        -Context    "Stage 4 — Report JSON validation" `
-        -Message    "Invoke-ZtAssessment completed but the expected JSON output was not found." `
-        -Detail     "Expected path: $reportJsonPath" `
+
+        -Context "Stage 4 — Report JSON validation" `
+
+        -Message "Invoke-ZtAssessment completed but the expected JSON output was not found." `
+
+        -Detail "Expected path: $reportJsonPath" `
+
         -Resolution "1. Check the temp folder contents. 2. Module version may have changed the output path."
+
     throw "ZeroTrustAssessmentReport.json not found at: $reportJsonPath"
+
 }
 
+
+
 try {
+
     $reportJson = Get-Content -Path $reportJsonPath -Raw -ErrorAction Stop | ConvertFrom-Json
+
     Write-Log "Assessment complete — Tenant: $($reportJson.TenantName)"
+
     Write-Log "Tests in report: $($reportJson.Tests.Count)"
+
 }
+
 catch {
+
     Write-DiagnosticError `
-        -Context    "Stage 4 — Parse assessment JSON" `
-        -Message    "Report JSON file exists but could not be parsed." `
-        -Detail     $_.Exception.Message `
+
+        -Context "Stage 4 — Parse assessment JSON" `
+
+        -Message "Report JSON file exists but could not be parsed." `
+
+        -Detail $_.Exception.Message `
+
         -Resolution "The JSON file may be corrupt or empty. Check available disk space on the VM."
+
     throw $_
+
 }
+
 #endregion
+
 
 
 #region ── 5. Upload helper ───────────────────────────────────────────────
+
 function Upload-JsonBlob {
+
     param(
+
         [Parameter(Mandatory)][string]$BlobPath,
+
         [Parameter(Mandatory)][object]$Data,
+
         [Parameter(Mandatory)]$StorageContext,
+
         [Parameter(Mandatory)][string]$Container
+
     )
 
+
+
+    $tempFile = $null
+
+
+
     try {
-        $json  = $Data | ConvertTo-Json -Depth 20 -Compress
-        $bytes = [System.Text.Encoding]::UTF8.GetBytes($json)
-        $ms    = [System.IO.MemoryStream]::new($bytes)
 
-        try {
-            Set-AzStorageBlobContent `
-                -Container   $Container `
-                -Blob        $BlobPath `
-                -BlobType    Block `
-                -Stream      $ms `
-                -ContentType "application/json" `
-                -Context     $StorageContext `
-                -Force | Out-Null
+        $json = $Data | ConvertTo-Json -Depth 20 -Compress
 
-            Write-Log "  [UPLOAD OK] $BlobPath ($($bytes.Length) bytes)"
-        }
-        finally {
-            $ms.Dispose()
-        }
+        $tempFile = Write-TempUtf8File -Content $json -Extension ".json"
+
+
+
+        Set-AzStorageBlobContent `
+
+            -Container $Container `
+
+            -Blob $BlobPath `
+
+            -File $tempFile `
+
+            -Properties @{ ContentType = "application/json" } `
+
+            -Context $StorageContext `
+
+            -Force | Out-Null
+
+
+
+        $length = (Get-Item $tempFile).Length
+
+        Write-Log " [UPLOAD OK] $BlobPath ($length bytes)"
+
     }
+
     catch {
-        Write-Log "  [UPLOAD FAIL] $BlobPath — $($_.Exception.Message)" "WARN"
-        Write-Log "  Resolution: Verify 'Storage Blob Data Contributor' is assigned to the identity on storage account '$storageAccountName'." "WARN"
+
+        Write-Log " [UPLOAD FAIL] $BlobPath — $($_.Exception.Message)" "WARN"
+
+        Write-Log " Resolution: Verify 'Storage Blob Data Contributor' is assigned to the identity on storage account '$storageAccountName'." "WARN"
+
     }
+
+    finally {
+
+        if ($tempFile -and (Test-Path $tempFile)) {
+
+            Remove-Item -Path $tempFile -Force -ErrorAction SilentlyContinue
+
+        }
+
+    }
+
 }
+
 #endregion
+
 
 
 #region ── 6. Upload full assessment report ───────────────────────────────
+
 Write-Log "━━━ STAGE 6: Uploading full assessment report ━━━"
 
+
+
 Upload-JsonBlob `
-    -BlobPath      "assessments/report-data.json" `
-    -Data          $reportJson `
+
+    -BlobPath "assessments/report-data.json" `
+
+    -Data $reportJson `
+
     -StorageContext $ctx `
-    -Container     $containerName
+
+    -Container $containerName
+
+
 
 Write-Log "Full assessment report uploaded."
+
 #endregion
+
 
 
 #region ── 7. Per-subscription data collection ────────────────────────────
+
 Write-Log "━━━ STAGE 7: Per-Subscription Data Collection ━━━"
+
 Write-Log "Processing $($targetSubscriptionIds.Count) subscription(s)..."
 
+
+
 foreach ($subId in $targetSubscriptionIds) {
+
     Write-Log "──── Subscription: $subId ────"
-    $blobBasePath   = "assessments/$targetTenantId/$subId/$today"
+
+
+
+    $blobBasePath = "assessments/$targetTenantId/$subId/$today"
+
     $blobLatestPath = "assessments/$targetTenantId/$subId/latest"
 
+
+
     #── 7a. Zero Trust snapshot ──────────────────────────────────────────
-    Write-Log "  [7a] Building Zero Trust snapshot..."
+
+    Write-Log " [7a] Building Zero Trust snapshot..."
+
+
 
     $pillars = @()
-    $checks  = @()
+
+    $checks = @()
 
     $pillarNames = @("Identity", "Devices", "Data", "Network")
+
+
+
     foreach ($pName in $pillarNames) {
-        $pillarTests = $reportJson.Tests | Where-Object { $_.TestPillar -eq $pName }
-        if (-not $pillarTests -or $pillarTests.Count -eq 0) {
-            Write-Log "    Pillar '$pName' — no tests found in report, skipping." "WARN"
+
+        $pillarTests = @($reportJson.Tests | Where-Object { $_.TestPillar -eq $pName })
+
+
+
+        if ($pillarTests.Count -eq 0) {
+
+            Write-Log " Pillar '$pName' — no tests found in report, skipping." "WARN"
+
             continue
+
         }
+
+
 
         $totalChecks = $pillarTests.Count
-        $passed      = ($pillarTests | Where-Object { $_.TestStatus -eq "Passed" }).Count
-        $failed      = $totalChecks - $passed
-        $score       = if ($totalChecks -gt 0) { [math]::Round(($passed / $totalChecks) * 100, 1) } else { 0 }
 
-        Write-Log "    Pillar '$pName': $passed/$totalChecks passed (score: $score)"
+        $passed = @($pillarTests | Where-Object { $_.TestStatus -eq "Passed" }).Count
+
+        $failed = $totalChecks - $passed
+
+        $score = 0
+
+
+
+        if ($totalChecks -gt 0) {
+
+            $score = [math]::Round(($passed / $totalChecks) * 100, 1)
+
+        }
+
+
+
+        Write-Log " Pillar '$pName': $passed/$totalChecks passed (score: $score)"
+
+
 
         $pillars += [ordered]@{
+
             name        = $pName
+
             score       = $score
+
             totalChecks = $totalChecks
+
             passed      = $passed
+
             failed      = $failed
+
         }
+
+
 
         foreach ($t in $pillarTests) {
-            $status = switch ($t.TestStatus) {
-                "Passed"  { "passed" }
-                "Failed"  { "failed" }
-                "Skipped" { "notApplicable" }
-                default   { "investigate" }
+
+            $status = "investigate"
+
+            switch ($t.TestStatus) {
+
+                "Passed" { $status = "passed" }
+
+                "Failed" { $status = "failed" }
+
+                "Skipped" { $status = "notApplicable" }
+
             }
-            $risk = switch ($t.TestRisk) {
-                "High"   { "high" }
-                "Medium" { "medium" }
-                "Low"    { "low" }
-                default  { "informational" }
+
+
+
+            $risk = "informational"
+
+            switch ($t.TestRisk) {
+
+                "High"   { $risk = "high" }
+
+                "Medium" { $risk = "medium" }
+
+                "Low"    { $risk = "low" }
+
             }
+
+
+
+            $desc = ""
+
+            if ($t.TestDescription) {
+
+                $desc = $t.TestDescription.Substring(0, [math]::Min(500, $t.TestDescription.Length))
+
+            }
+
+
+
+            $area = $pName
+
+            if ($t.TestCategory) {
+
+                $area = $t.TestCategory
+
+            }
+
+
+
+            $checkScore = 0
+
+            if ($status -eq "passed") {
+
+                $checkScore = 100
+
+            }
+
+
 
             $checks += [ordered]@{
+
                 id           = $t.TestId
+
                 name         = $t.TestTitle
+
                 pillar       = $pName
-                area         = if ($t.TestCategory) { $t.TestCategory } else { $pName }
+
+                area         = $area
+
                 status       = $status
+
                 risk         = $risk
-                description  = if ($t.TestDescription) { $t.TestDescription.Substring(0, [math]::Min(500, $t.TestDescription.Length)) } else { "" }
+
+                description  = $desc
+
                 remediation  = ""
+
                 learnMoreUrl = ""
-                score        = if ($status -eq "passed") { 100 } else { 0 }
+
+                score        = $checkScore
+
                 weight       = 1
+
             }
+
         }
+
     }
 
-    $overallScore = if ($pillars.Count -gt 0) {
-        [math]::Round(($pillars | ForEach-Object { $_.score } | Measure-Object -Average).Average, 1)
-    } else { 0 }
+
+
+    $overallScore = 0
+
+    if ($pillars.Count -gt 0) {
+
+        $avg = ($pillars | ForEach-Object { $_.score } | Measure-Object -Average).Average
+
+        if ($null -ne $avg) {
+
+            $overallScore = [math]::Round($avg, 1)
+
+        }
+
+    }
+
+
 
     $ztSnapshot = [ordered]@{
+
         tenantId     = $targetTenantId
+
         tenantName   = $reportJson.TenantName
+
         runDate      = $today
+
         overallScore = $overallScore
+
         pillars      = $pillars
+
         checks       = $checks
+
     }
 
-    Upload-JsonBlob -BlobPath "$blobBasePath/zero-trust.json"  -Data $ztSnapshot -StorageContext $ctx -Container $containerName
+
+
+    Upload-JsonBlob -BlobPath "$blobBasePath/zero-trust.json" -Data $ztSnapshot -StorageContext $ctx -Container $containerName
+
     Upload-JsonBlob -BlobPath "$blobLatestPath/zero-trust.json" -Data $ztSnapshot -StorageContext $ctx -Container $containerName
 
+
+
     #── 7b. Policy Compliance ─────────────────────────────────────────────
-    Write-Log "  [7b] Collecting Policy Compliance data..."
+
+    Write-Log " [7b] Collecting Policy Compliance data..."
 
     $initiatives = @()
+
+
+
     $policyQuery = @"
+
 PolicyResources
+
 | where type == 'microsoft.policyinsights/policystates'
+
 | where subscriptionId == '$subId'
+
 | where properties.complianceState != ''
-| extend initiativeId   = tostring(properties.policySetDefinitionId),
+
+| extend initiativeId = tostring(properties.policySetDefinitionId),
+
          initiativeName = tostring(properties.policySetDefinitionName),
-         complianceState= tostring(properties.complianceState),
-         policyDefId    = tostring(properties.policyDefinitionId),
+
+         complianceState = tostring(properties.complianceState),
+
+         policyDefId = tostring(properties.policyDefinitionId),
+
          policyAssignId = tostring(properties.policyAssignmentId)
-| summarize compliantCount    = countif(complianceState == 'Compliant'),
+
+| summarize compliantCount = countif(complianceState == 'Compliant'),
+
             nonCompliantCount = countif(complianceState == 'NonCompliant'),
-            exemptCount       = countif(complianceState == 'Exempt'),
-            totalPolicies     = dcount(policyDefId)
-            by initiativeId, initiativeName, policyAssignId
+
+            exemptCount = countif(complianceState == 'Exempt'),
+
+            totalPolicies = dcount(policyDefId)
+
+  by initiativeId, initiativeName, policyAssignId
+
 | project initiativeId, initiativeName, policyAssignId,
+
           compliantCount, nonCompliantCount, exemptCount, totalPolicies
+
 | order by nonCompliantCount desc
+
 | take 100
+
 "@
 
+
+
     try {
+
         $policyResults = Search-AzGraph -Query $policyQuery -Subscription $subId -ErrorAction Stop
-        Write-Log "    Resource Graph policy query returned $($policyResults.Data.Count) initiative(s)."
 
-        foreach ($row in $policyResults.Data) {
-            $initiativeType = if ($row.initiativeId -like "*/providers/Microsoft.Authorization/policySetDefinitions/*") { "builtin" } else { "custom" }
-            $initiatives += [ordered]@{
-                id                = $row.initiativeId
-                name              = if ($row.initiativeName) { $row.initiativeName } else { "Unnamed Initiative" }
-                type              = $initiativeType
-                assignmentId      = $row.policyAssignId
-                subscriptionId    = $subId
-                compliantCount    = [int]$row.compliantCount
-                nonCompliantCount = [int]$row.nonCompliantCount
-                exemptCount       = [int]$row.exemptCount
-                totalPolicies     = [int]$row.totalPolicies
-                resources         = @()
+        $policyRows = @($policyResults.Data)
+
+        Write-Log " Resource Graph policy query returned $($policyRows.Count) initiative(s)."
+
+
+
+        foreach ($row in $policyRows) {
+
+            $initiativeType = "custom"
+
+            if ($row.initiativeId -like "*/providers/Microsoft.Authorization/policySetDefinitions/*") {
+
+                $initiativeType = "builtin"
+
             }
+
+
+
+            $initiativeName = "Unnamed Initiative"
+
+            if ($row.initiativeName) {
+
+                $initiativeName = $row.initiativeName
+
+            }
+
+
+
+            $initiatives += [ordered]@{
+
+                id                = $row.initiativeId
+
+                name              = $initiativeName
+
+                type              = $initiativeType
+
+                assignmentId      = $row.policyAssignId
+
+                subscriptionId    = $subId
+
+                compliantCount    = [int]$row.compliantCount
+
+                nonCompliantCount = [int]$row.nonCompliantCount
+
+                exemptCount       = [int]$row.exemptCount
+
+                totalPolicies     = [int]$row.totalPolicies
+
+                resources         = @()
+
+            }
+
         }
-    }
-    catch {
-        Write-Log "    [WARN] Resource Graph policy query failed: $($_.Exception.Message)" "WARN"
+
     }
 
-    # Fallback to direct policy state API if Resource Graph returned nothing
+    catch {
+
+        Write-Log " [WARN] Resource Graph policy query failed: $($_.Exception.Message)" "WARN"
+
+    }
+
+
+
     if ($initiatives.Count -eq 0) {
-        Write-Log "    Resource Graph returned no results — trying Get-AzPolicyState fallback..."
+
+        Write-Log " Resource Graph returned no results — trying Get-AzPolicyState fallback..."
+
+
+
         try {
-            $policyStates = Get-AzPolicyState -SubscriptionId $subId -Top 200 -ErrorAction Stop
-            Write-Log "    Get-AzPolicyState returned $($policyStates.Count) state(s)."
+
+            $policyStates = @(Get-AzPolicyState -SubscriptionId $subId -Top 200 -ErrorAction Stop)
+
+            Write-Log " Get-AzPolicyState returned $($policyStates.Count) state(s)."
+
+
+
             $grouped = $policyStates | Group-Object { $_.PolicySetDefinitionId }
 
+
+
             foreach ($g in $grouped) {
+
                 if (-not $g.Name) { continue }
-                $compliant    = ($g.Group | Where-Object { $_.ComplianceState -eq "Compliant" }).Count
-                $nonCompliant = ($g.Group | Where-Object { $_.ComplianceState -eq "NonCompliant" }).Count
-                $exempt       = ($g.Group | Where-Object { $_.ComplianceState -eq "Exempt" }).Count
+
+
+
+                $first = $g.Group | Select-Object -First 1
+
+                $compliant = @($g.Group | Where-Object { $_.ComplianceState -eq "Compliant" }).Count
+
+                $nonCompliant = @($g.Group | Where-Object { $_.ComplianceState -eq "NonCompliant" }).Count
+
+                $exempt = @($g.Group | Where-Object { $_.ComplianceState -eq "Exempt" }).Count
+
+                $totalPolicies = @($g.Group | Select-Object -ExpandProperty PolicyDefinitionId -Unique).Count
+
+
 
                 $initiatives += [ordered]@{
+
                     id                = $g.Name
-                    name              = ($g.Group | Select-Object -First 1).PolicySetDefinitionName
+
+                    name              = $first.PolicySetDefinitionName
+
                     type              = "builtin"
-                    assignmentId      = ($g.Group | Select-Object -First 1).PolicyAssignmentId
+
+                    assignmentId      = $first.PolicyAssignmentId
+
                     subscriptionId    = $subId
+
                     compliantCount    = $compliant
+
                     nonCompliantCount = $nonCompliant
+
                     exemptCount       = $exempt
-                    totalPolicies     = ($g.Group | Select-Object -ExpandProperty PolicyDefinitionId -Unique).Count
+
+                    totalPolicies     = $totalPolicies
+
                     resources         = @()
+
                 }
+
             }
+
         }
+
         catch {
-            Write-Log "    [WARN] Get-AzPolicyState fallback also failed: $($_.Exception.Message)" "WARN"
-            Write-Log "    [WARN] Policy data will be empty for this subscription." "WARN"
+
+            Write-Log " [WARN] Get-AzPolicyState fallback also failed: $($_.Exception.Message)" "WARN"
+
+            Write-Log " [WARN] Policy data will be empty for this subscription." "WARN"
+
         }
+
     }
 
-    # Fetch non-compliant resources and attach to initiatives
+
+
     if ($initiatives.Count -gt 0) {
-        Write-Log "    Fetching non-compliant resource details..."
-        try {
-            $resourceQuery = @"
-PolicyResources
-| where type == 'microsoft.policyinsights/policystates'
-| where subscriptionId == '$subId'
-| where properties.complianceState == 'NonCompliant'
-| extend resourceId    = tostring(properties.resourceId),
-         resourceName  = tostring(split(properties.resourceId, '/')[-1]),
-         resourceType  = tostring(properties.resourceType),
-         resourceGroup = tostring(properties.resourceGroup),
-         policyDefId   = tostring(properties.policyDefinitionId),
-         policyName    = tostring(properties.policyDefinitionName),
-         initiativeId  = tostring(properties.policySetDefinitionId),
-         state         = tostring(properties.complianceState)
-| project resourceId, resourceName, resourceType, resourceGroup,
-          subscriptionId, state, policyDefId, policyName, initiativeId
-| take 200
-"@
-            $ncResources = Search-AzGraph -Query $resourceQuery -Subscription $subId -ErrorAction Stop
-            Write-Log "    Found $($ncResources.Data.Count) non-compliant resource(s)."
 
-            foreach ($r in $ncResources.Data) {
+        Write-Log " Fetching non-compliant resource details..."
+
+
+
+        try {
+
+            $resourceQuery = @"
+
+PolicyResources
+
+| where type == 'microsoft.policyinsights/policystates'
+
+| where subscriptionId == '$subId'
+
+| where properties.complianceState == 'NonCompliant'
+
+| extend resourceId = tostring(properties.resourceId),
+
+         resourceName = tostring(split(properties.resourceId, '/')[-1]),
+
+         resourceType = tostring(properties.resourceType),
+
+         resourceGroup = tostring(properties.resourceGroup),
+
+         policyDefId = tostring(properties.policyDefinitionId),
+
+         policyName = tostring(properties.policyDefinitionName),
+
+         initiativeId = tostring(properties.policySetDefinitionId),
+
+         state = tostring(properties.complianceState)
+
+| project resourceId, resourceName, resourceType, resourceGroup,
+
+          subscriptionId, state, policyDefId, policyName, initiativeId
+
+| take 200
+
+"@
+
+
+
+            $ncResults = Search-AzGraph -Query $resourceQuery -Subscription $subId -ErrorAction Stop
+
+            $ncRows = @($ncResults.Data)
+
+            Write-Log " Found $($ncRows.Count) non-compliant resource(s)."
+
+
+
+            foreach ($r in $ncRows) {
+
                 $matchInit = $initiatives | Where-Object { $_.id -eq $r.initiativeId } | Select-Object -First 1
-                if ($matchInit) {
-                    $matchInit.resources += [ordered]@{
-                        resourceId      = $r.resourceId
-                        resourceName    = $r.resourceName
-                        resourceType    = $r.resourceType
-                        resourceGroup   = $r.resourceGroup
-                        subscriptionId  = $subId
-                        state           = "NonCompliant"
-                        failingPolicies = @([ordered]@{
-                            id          = $r.policyDefId
-                            name        = if ($r.policyName) { $r.policyName } else { "Unknown Policy" }
-                            description = ""
-                        })
-                    }
+
+                if ($null -eq $matchInit) { continue }
+
+
+
+                $policyName = "Unknown Policy"
+
+                if ($r.policyName) {
+
+                    $policyName = $r.policyName
+
                 }
+
+
+
+                $matchInit.resources += [ordered]@{
+
+                    resourceId     = $r.resourceId
+
+                    resourceName   = $r.resourceName
+
+                    resourceType   = $r.resourceType
+
+                    resourceGroup  = $r.resourceGroup
+
+                    subscriptionId = $subId
+
+                    state          = "NonCompliant"
+
+                    failingPolicies = @(
+
+                        [ordered]@{
+
+                            id          = $r.policyDefId
+
+                            name        = $policyName
+
+                            description = ""
+
+                        }
+
+                    )
+
+                }
+
             }
+
         }
+
         catch {
-            Write-Log "    [WARN] Non-compliant resource query failed: $($_.Exception.Message)" "WARN"
+
+            Write-Log " [WARN] Non-compliant resource query failed: $($_.Exception.Message)" "WARN"
+
         }
+
     }
 
-    $policyCompliance = [ordered]@{ runDate = $today; initiatives = $initiatives }
-    Upload-JsonBlob -BlobPath "$blobBasePath/policy-compliance.json"  -Data $policyCompliance -StorageContext $ctx -Container $containerName
+
+
+    $policyCompliance = [ordered]@{
+
+        runDate     = $today
+
+        initiatives = $initiatives
+
+    }
+
+
+
+    Upload-JsonBlob -BlobPath "$blobBasePath/policy-compliance.json" -Data $policyCompliance -StorageContext $ctx -Container $containerName
+
     Upload-JsonBlob -BlobPath "$blobLatestPath/policy-compliance.json" -Data $policyCompliance -StorageContext $ctx -Container $containerName
 
-    #── 7c. Defender for Cloud Recommendations ───────────────────────────
-    Write-Log "  [7c] Collecting Defender for Cloud recommendations..."
+
+
+    #── 7c. Defender for Cloud Recommendations ────────────────────────────
+
+    Write-Log " [7c] Collecting Defender for Cloud recommendations..."
 
     $recommendations = @()
+
+
+
     try {
+
         Set-AzContext -SubscriptionId $subId | Out-Null
-        $assessments = Get-AzSecurityAssessment -ErrorAction Stop | Select-Object -First 500
-        Write-Log "    Found $($assessments.Count) Defender assessment(s)."
+
+
+
+        $assessments = @(Get-AzSecurityAssessment -ErrorAction Stop | Select-Object -First 500)
+
+        Write-Log " Found $($assessments.Count) Defender assessment(s)."
+
+
 
         foreach ($a in $assessments) {
-            $severity = switch ($a.Status.Severity) {
-                "High"     { "high" }
-                "Critical" { "critical" }
-                "Medium"   { "medium" }
-                "Low"      { "low" }
-                default    { "medium" }
+
+            $severity = "medium"
+
+            switch ($a.Status.Severity) {
+
+                "Critical" { $severity = "critical" }
+
+                "High"     { $severity = "high" }
+
+                "Medium"   { $severity = "medium" }
+
+                "Low"      { $severity = "low" }
+
             }
-            $category = if ($a.Metadata.Categories -and $a.Metadata.Categories.Count -gt 0) {
-                $a.Metadata.Categories[0]
-            } else { "General" }
+
+
+
+            $category = "General"
+
+            if ($a.Metadata.Categories -and $a.Metadata.Categories.Count -gt 0) {
+
+                $category = $a.Metadata.Categories[0]
+
+            }
+
+
+
+            $description = ""
+
+            if ($a.Metadata.Description) {
+
+                $description = $a.Metadata.Description
+
+            }
+
+
+
+            $remediation = ""
+
+            if ($a.Metadata.RemediationDescription) {
+
+                $remediation = $a.Metadata.RemediationDescription
+
+            }
+
+
+
+            $resourceCount = 0
+
+            if ($a.Status.UnhealthyResourceCount) {
+
+                $resourceCount = [int]$a.Status.UnhealthyResourceCount
+
+            }
+
+
+
+            $displayName = $a.Name
+
+            if ($a.DisplayName) {
+
+                $displayName = $a.DisplayName
+
+            }
+
+
 
             $recommendations += [ordered]@{
+
                 id                     = $a.Name
-                name                   = if ($a.DisplayName) { $a.DisplayName } else { $a.Name }
-                description            = if ($a.Metadata.Description) { $a.Metadata.Description } else { "" }
+
+                name                   = $displayName
+
+                description            = $description
+
                 severity               = $severity
+
                 category               = $category
+
                 subscriptionId         = $subId
-                resourceCount          = if ($a.Status.UnhealthyResourceCount) { [int]$a.Status.UnhealthyResourceCount } else { 0 }
+
+                resourceCount          = $resourceCount
+
                 hasAttackPath          = $false
+
                 affectedResources      = @()
-                remediation            = if ($a.Metadata.RemediationDescription) { $a.Metadata.RemediationDescription } else { "" }
+
+                remediation            = $remediation
+
                 learnMoreUrl           = ""
+
                 governanceAssignmentId = ""
+
             }
+
         }
 
+
+
         Set-AzContext -SubscriptionId $azureSubscriptionId | Out-Null
-    }
-    catch {
-        Write-Log "    [WARN] Defender recommendations failed: $($_.Exception.Message)" "WARN"
-        Set-AzContext -SubscriptionId $azureSubscriptionId -ErrorAction SilentlyContinue | Out-Null
+
     }
 
-    $defenderRecs = [ordered]@{ runDate = $today; recommendations = $recommendations }
-    Upload-JsonBlob -BlobPath "$blobBasePath/defender-recs.json"  -Data $defenderRecs -StorageContext $ctx -Container $containerName
+    catch {
+
+        Write-Log " [WARN] Defender recommendations failed: $($_.Exception.Message)" "WARN"
+
+        Set-AzContext -SubscriptionId $azureSubscriptionId -ErrorAction SilentlyContinue | Out-Null
+
+    }
+
+
+
+    $defenderRecs = [ordered]@{
+
+        runDate         = $today
+
+        recommendations = $recommendations
+
+    }
+
+
+
+    Upload-JsonBlob -BlobPath "$blobBasePath/defender-recs.json" -Data $defenderRecs -StorageContext $ctx -Container $containerName
+
     Upload-JsonBlob -BlobPath "$blobLatestPath/defender-recs.json" -Data $defenderRecs -StorageContext $ctx -Container $containerName
 
-    #── 7d. Governance Rules ─────────────────────────────────────────────
-    Write-Log "  [7d] Collecting Governance Rules..."
+
+
+    #── 7d. Governance Rules ───────────────────────────────────────────────
+
+    Write-Log " [7d] Collecting Governance Rules..."
 
     $govRules = @()
+
+
+
     try {
+
         Set-AzContext -SubscriptionId $subId | Out-Null
 
-        $token   = (Get-AzAccessToken -ResourceUrl "https://management.azure.com" -ErrorAction Stop).Token
-        $govUri  = "https://management.azure.com/subscriptions/$subId/providers/Microsoft.Security/governanceRules?api-version=2022-01-01-preview"
-        $headers = @{ Authorization = "Bearer $token"; "Content-Type" = "application/json" }
+
+
+        $token = (Get-AzAccessToken -ResourceUrl "https://management.azure.com" -ErrorAction Stop).Token
+
+        $govUri = "https://management.azure.com/subscriptions/$subId/providers/Microsoft.Security/governanceRules?api-version=2022-01-01-preview"
+
+        $headers = @{
+
+            Authorization = "Bearer $token"
+
+            "Content-Type" = "application/json"
+
+        }
+
+
 
         try {
-            $govResponse = Invoke-RestMethod -Uri $govUri -Headers $headers -Method Get -ErrorAction Stop
-            Write-Log "    Found $($govResponse.value.Count) governance rule(s)."
 
-            foreach ($rule in $govResponse.value) {
-                $props         = $rule.properties
-                $status        = "notStarted"
+            $govResponse = Invoke-RestMethod -Uri $govUri -Headers $headers -Method Get -ErrorAction Stop
+
+            $govItems = @($govResponse.value)
+
+            Write-Log " Found $($govItems.Count) governance rule(s)."
+
+
+
+            foreach ($rule in $govItems) {
+
+                $props = $rule.properties
+
+
+
+                $status = "notStarted"
+
                 $completionPct = 0
-                if ($props.isGracePeriod) { $status = "inProgress"; $completionPct = 50 }
+
+                if ($props.isGracePeriod) {
+
+                    $status = "inProgress"
+
+                    $completionPct = 50
+
+                }
+
+
+
+                $owner = "Unassigned"
+
+                if ($props.ownerSource -and $props.ownerSource.value) {
+
+                    $owner = $props.ownerSource.value
+
+                }
+
+
+
+                $dueDate = ""
+
+                if ($props.governanceEmailNotification) {
+
+                    $dueDate = $today
+
+                }
+
+
+
+                $description = $rule.name
+
+                if ($props.description) {
+
+                    $description = $props.description
+
+                }
+
+
 
                 $govRules += [ordered]@{
+
                     id                      = $rule.id
+
                     name                    = $rule.name
-                    owner                   = if ($props.ownerSource.value) { $props.ownerSource.value } else { "Unassigned" }
+
+                    owner                   = $owner
+
                     ownerEmail              = ""
-                    dueDate                 = if ($props.governanceEmailNotification) { $today } else { "" }
+
+                    dueDate                 = $dueDate
+
                     subscriptionId          = $subId
+
                     status                  = $status
+
                     completionPercentage    = $completionPct
+
                     linkedRecommendationIds = @()
+
                     linkedPolicyIds         = @()
-                    description             = if ($props.description) { $props.description } else { $rule.name }
+
+                    description             = $description
+
                     completionCriteria      = @()
+
                 }
+
             }
+
         }
+
         catch {
-            Write-Log "    [WARN] Governance Rules REST call failed: $($_.Exception.Message)" "WARN"
+
+            Write-Log " [WARN] Governance Rules REST call failed: $($_.Exception.Message)" "WARN"
+
         }
+
+
 
         Set-AzContext -SubscriptionId $azureSubscriptionId | Out-Null
-    }
-    catch {
-        Write-Log "    [WARN] Governance stage failed: $($_.Exception.Message)" "WARN"
-        Set-AzContext -SubscriptionId $azureSubscriptionId -ErrorAction SilentlyContinue | Out-Null
+
     }
 
-    $governance = [ordered]@{ runDate = $today; rules = $govRules }
-    Upload-JsonBlob -BlobPath "$blobBasePath/governance.json"  -Data $governance -StorageContext $ctx -Container $containerName
+    catch {
+
+        Write-Log " [WARN] Governance stage failed: $($_.Exception.Message)" "WARN"
+
+        Set-AzContext -SubscriptionId $azureSubscriptionId -ErrorAction SilentlyContinue | Out-Null
+
+    }
+
+
+
+    $governance = [ordered]@{
+
+        runDate = $today
+
+        rules   = $govRules
+
+    }
+
+
+
+    Upload-JsonBlob -BlobPath "$blobBasePath/governance.json" -Data $governance -StorageContext $ctx -Container $containerName
+
     Upload-JsonBlob -BlobPath "$blobLatestPath/governance.json" -Data $governance -StorageContext $ctx -Container $containerName
 
-    Write-Log "  ✅ Subscription $subId — complete"
-}
-#endregion
 
 
-#region ── 8. Build tenant-index.json ────────────────────────────────────
-Write-Log "━━━ STAGE 8: Building tenant-index.json ━━━"
+    Write-Log " ✅ Subscription $subId — complete"
 
-$existingIndex = $null
-try {
-    $existingBlob = Get-AzStorageBlobContent `
-        -Container   $containerName `
-        -Blob        "assessments/tenant-index.json" `
-        -Context     $ctx `
-        -Destination (Join-Path $env:TEMP "tenant-index-existing.json") `
-        -Force -ErrorAction Stop
-    $existingIndex = Get-Content (Join-Path $env:TEMP "tenant-index-existing.json") -Raw | ConvertFrom-Json
-    Write-Log "  Found existing tenant-index.json — merging historical dates."
-}
-catch {
-    Write-Log "  No existing tenant-index.json — creating fresh (first run or container was reset)."
 }
 
-$maxHistoryDays = 90
-$cutoffDate     = (Get-Date).AddDays(-$maxHistoryDays).ToString("yyyy-MM-dd")
-$subscriptions  = @()
-
-foreach ($subId in $targetSubscriptionIds) {
-    $subName = $subId
-    try {
-        $azSub   = Get-AzSubscription -SubscriptionId $subId -ErrorAction Stop
-        $subName = $azSub.Name
-    }
-    catch {
-        Write-Log "  [WARN] Could not retrieve name for subscription '$subId': $($_.Exception.Message)" "WARN"
-    }
-
-    $historicalDates = @()
-    if ($existingIndex) {
-        $existingTenant = $existingIndex.tenants | Where-Object { $_.id -eq $targetTenantId }
-        if ($existingTenant) {
-            $existingSub = $existingTenant.subscriptions | Where-Object { $_.id -eq $subId }
-            if ($existingSub -and $existingSub.dates) {
-                $historicalDates = @($existingSub.dates | Where-Object { $_ -ge $cutoffDate -and $_ -ne $today })
-            }
-        }
-    }
-
-    $resourceGroups = @()
-    try {
-        Set-AzContext -SubscriptionId $subId | Out-Null
-        $resourceGroups = @(Get-AzResourceGroup -ErrorAction Stop | ForEach-Object { $_.ResourceGroupName })
-        Write-Log "  Sub '$subName': $($resourceGroups.Count) resource group(s)"
-        Set-AzContext -SubscriptionId $azureSubscriptionId | Out-Null
-    }
-    catch {
-        Write-Log "  [WARN] Could not list resource groups for '$subId': $($_.Exception.Message)" "WARN"
-        Set-AzContext -SubscriptionId $azureSubscriptionId -ErrorAction SilentlyContinue | Out-Null
-    }
-
-    $subscriptions += [ordered]@{
-        id             = $subId
-        name           = $subName
-        resourceGroups = $resourceGroups
-        dates          = @(@($historicalDates) + @($today) | Sort-Object -Unique)
-    }
-}
-
-$tenantIndex = [ordered]@{
-    tenants = @([ordered]@{
-        id            = $targetTenantId
-        name          = $reportJson.TenantName
-        subscriptions = $subscriptions
-    })
-}
-
-Upload-JsonBlob -BlobPath "assessments/tenant-index.json" -Data $tenantIndex -StorageContext $ctx -Container $containerName
-Write-Log "tenant-index.json uploaded."
-#endregion
-
-
-#region ── 9. Upload report-data.js for Dashboard ────────────────────────
-Write-Log "━━━ STAGE 9: Uploading report-data.js ━━━"
-
-try {
-    $reportDataJs = "window.__REPORT_DATA__ = $($reportJson | ConvertTo-Json -Depth 20 -Compress);"
-    $jsBytes      = [System.Text.Encoding]::UTF8.GetBytes($reportDataJs)
-    $jsMs         = [System.IO.MemoryStream]::new($jsBytes)
-    try {
-        Set-AzStorageBlobContent `
-            -Container   $containerName `
-            -Blob        "config/report-data.js" `
-            -BlobType    Block `
-            -Stream      $jsMs `
-            -ContentType "application/javascript" `
-            -Context     $ctx `
-            -Force | Out-Null
-        Write-Log "  [UPLOAD OK] config/report-data.js ($($jsBytes.Length) bytes)"
-    }
-    finally {
-        $jsMs.Dispose()
-    }
-}
-catch {
-    Write-Log "  [WARN] Failed to upload report-data.js: $($_.Exception.Message)" "WARN"
-}
-#endregion
-
-
-#region ── 10. Cleanup ────────────────────────────────────────────────────
-Write-Log "━━━ STAGE 10: Cleanup ━━━"
-
-if (Test-Path $reportPath) {
-    Remove-Item -Path $reportPath -Recurse -Force -ErrorAction SilentlyContinue
-    Write-Log "Temp report folder removed."
-}
-
-if ($null -ne $duckdbrcPath -and (Test-Path $duckdbrcPath)) {
-    Remove-Item -Path $duckdbrcPath -Force -ErrorAction SilentlyContinue
-    Write-Log "Temp DuckDB configuration file removed."
-}
-
-Disconnect-MgGraph -ErrorAction SilentlyContinue | Out-Null
-Write-Log "Graph session disconnected."
-#endregion
-
-
-#region ── Final Summary ──────────────────────────────────────────────────
-Write-Log "═══════════════════════════════════════════════════════════"
-Write-Log "✅ Daily data collection COMPLETE (Hybrid Worker)"
-Write-Log "   Date          : $today"
-Write-Log "   Tenant        : $($reportJson.TenantName) ($targetTenantId)"
-Write-Log "   Subscriptions : $($targetSubscriptionIds.Count)"
-Write-Log "   Storage       : $storageAccountName / $containerName"
-Write-Log "   Worker Host   : $($env:COMPUTERNAME)"
-Write-Log "═══════════════════════════════════════════════════════════"
 #endregion
