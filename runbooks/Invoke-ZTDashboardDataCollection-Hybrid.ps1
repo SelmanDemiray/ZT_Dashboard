@@ -700,20 +700,33 @@ if ($authMethod -eq 'ManagedIdentity') {
     $armToken   = $preflightTokens.ArmToken
     $graphToken = $preflightTokens.GraphToken
 
-    Write-Log "Calling Connect-AzAccount with pre-fetched ARM + Graph tokens..."
+    # IMPORTANT: Use -Identity -AccountId, NOT -AccessToken.
+    #
+    # -AccessToken creates a static single-resource session. Az.Accounts holds
+    # one pre-fetched ARM token and cannot acquire tokens for other resources.
+    # When Stage 3 calls New-AzStorageContext -UseConnectedAccount, Az.Storage
+    # internally requests a storage-scoped token (https://storage.azure.com/).
+    # With a static session the resource URI resolves to '' and you get:
+    #   "Access token authenticator failed to retrieve access token for resources ''"
+    #
+    # -Identity -AccountId registers the UAMI as a live ManagedServiceIdentity
+    # credential. Az.Accounts then calls IMDS on-demand for whatever resource
+    # is needed (ARM, storage, Key Vault, etc.), which is the correct behaviour.
+    # The preflight IMDS calls above already confirmed IMDS is reachable and the
+    # UAMI is valid, so this call will succeed immediately.
+    Write-Log "Calling Connect-AzAccount -Identity -AccountId (live UAMI credential — enables multi-resource token acquisition)..."
     try {
         Connect-AzAccount `
-            -AccessToken               $armToken.access_token `
-            -AccountId                 $uamiClientId `
-            -Tenant                    $targetTenantId `
-            -MicrosoftGraphAccessToken $graphToken.access_token | Out-Null
+            -Identity  `
+            -AccountId $uamiClientId `
+            -Tenant    $targetTenantId | Out-Null
         Write-Log "Connect-AzAccount (UAMI) — ✅"
     }
     catch {
         Write-MiDiagnostic -Code "MI-UAMI-022" -Context "Stage 2 — Connect-AzAccount" `
             -Message "Failed to authenticate to Azure with the UAMI." `
             -Detail $_.Exception.Message `
-            -Resolution "Confirm the UAMI is attached to the VM, the Client ID is correct, and the identity has 'Reader' RBAC on target subscriptions."
+            -Resolution "Confirm the UAMI is attached to the Hybrid Worker VM (VM > Identity > User assigned), the Client ID is correct, and IMDS is reachable (no proxy blocking 169.254.169.254)."
         throw $_
     }
 
