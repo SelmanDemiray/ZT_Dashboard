@@ -714,6 +714,33 @@ if ($authMethod -eq 'ManagedIdentity') {
     # is needed (ARM, storage, Key Vault, etc.), which is the correct behaviour.
     # The preflight IMDS calls above already confirmed IMDS is reachable and the
     # UAMI is valid, so this call will succeed immediately.
+
+    # ── Clear Hybrid Worker Agent MSI environment variables ──────────────────
+    # ROOT CAUSE FIX: The Hybrid Worker Agent sets IDENTITY_ENDPOINT (and related
+    # vars) as process-level env vars pointing to the Automation Account's own
+    # internal token service. The Azure Identity SDK (used inside Az.Accounts)
+    # honours those vars and sends the UAMI client_id to that endpoint — which
+    # returns "User assigned identity is currently not supported / ClientID must
+    # not be passed in request" because the Automation endpoint does not support
+    # UAMI selection by client_id.
+    #
+    # Our pre-flight Get-ImdsToken calls bypass the SDK entirely (raw HTTP to
+    # 169.254.169.254) so they succeed. Connect-AzAccount then fails because
+    # the SDK never reaches IMDS — it hits the Automation endpoint instead.
+    #
+    # Fix: unset these vars before Connect-AzAccount. The SDK then falls back
+    # to direct IMDS (169.254.169.254), which the pre-flight has already proven
+    # works with the UAMI client_id on this VM.
+    $msiEnvVars = @('IDENTITY_ENDPOINT','IDENTITY_HEADER','MSI_ENDPOINT','MSI_SECRET')
+    foreach ($v in $msiEnvVars) {
+        $current = [System.Environment]::GetEnvironmentVariable($v)
+        if ($null -ne $current) {
+            Write-Log "  Clearing inherited MSI env var $v='$current' (was redirecting Azure.Identity away from IMDS)" "WARN"
+            [System.Environment]::SetEnvironmentVariable($v, $null)
+        }
+    }
+    Write-Log "  MSI env-var cleanup done — Azure.Identity will now use VM IMDS directly."
+
     Write-Log "Calling Connect-AzAccount -Identity -AccountId (live UAMI credential — enables multi-resource token acquisition)..."
     try {
         Connect-AzAccount `
