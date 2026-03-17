@@ -14,13 +14,26 @@ function buildUrl(path: string): string {
     if (!BLOB_BASE_URL) {
         throw new Error("VITE_BLOB_BASE_URL is not defined in the environment. Real data cannot be loaded.");
     }
+    const base = `${BLOB_BASE_URL}/assessments/${path}`;
+    if (!BLOB_SAS_TOKEN) return base;
     const separator = BLOB_SAS_TOKEN.startsWith('?') ? '' : '?';
-    return `${BLOB_BASE_URL}/assessments/${path}${separator}${BLOB_SAS_TOKEN}`;
+    return `${base}${separator}${BLOB_SAS_TOKEN}`;
 }
 
-async function fetchJson<T>(path: string): Promise<T> {
-    const url = buildUrl(path);
-    const res = await fetch(url);
+async function fetchJson<T>(path: string, noCache = false): Promise<T> {
+    let url = buildUrl(path);
+    
+    // Add cache buster for the index file so we always see new daily runs
+    if (noCache) {
+        const char = url.includes('?') ? '&' : '?';
+        url += `${char}t=${new Date().getTime()}`;
+    }
+
+    const res = await fetch(url, {
+        cache: noCache ? 'no-store' : 'default',
+        headers: noCache ? { 'Cache-Control': 'no-cache' } : undefined
+    });
+
     if (!res.ok) {
         throw new Error(`Failed to fetch ${path}: ${res.status} ${res.statusText}`);
     }
@@ -28,7 +41,8 @@ async function fetchJson<T>(path: string): Promise<T> {
 }
 
 export async function fetchTenantIndex(): Promise<TenantIndex> {
-    return fetchJson<TenantIndex>('tenant-index.json');
+    // We strictly bypass cache for the index so we always get the latest dates
+    return fetchJson<TenantIndex>('tenant-index.json', true);
 }
 
 export async function fetchZeroTrust(
