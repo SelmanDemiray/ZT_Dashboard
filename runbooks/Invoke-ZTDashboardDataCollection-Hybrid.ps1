@@ -28,7 +28,14 @@ function Write-Log {
 
     $ts = (Get-Date).ToString("HH:mm:ss")
 
-    Write-Output "[$ts][$Level] $Message"
+    # FIX: Write-Host instead of Write-Output.
+    # Write-Output goes to the success/pipeline stream — when a function's return
+    # value is captured into a variable ($preflightTokens = Test-UAMI ...) every
+    # Write-Output call inside that function is silently swallowed into the variable
+    # instead of flowing to the job output pane. Write-Host targets the Information
+    # stream which is never captured by variable assignment, so logs always appear
+    # in the Azure Automation job Output tab in real-time regardless of call context.
+    Write-Host "[$ts][$Level] $Message"
 
 }
 
