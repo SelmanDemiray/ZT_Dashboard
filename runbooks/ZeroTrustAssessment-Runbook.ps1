@@ -980,17 +980,34 @@ if ($authMethod -eq 'ManagedIdentity') {
     # ── Connect-MgGraph ───────────────────────────────────────────────────
     # Pass the pre-fetched IMDS Graph token as a SecureString.
     # This avoids any WAM/interactive prompt on the Hybrid Worker.
-    Write-Log "Calling Connect-MgGraph with pre-fetched IMDS Graph token..."
+    # ROOT CAUSE FIX (token expiry):
+    #   Previous code used: Connect-MgGraph -AccessToken $secureGraphToken
+    #   -AccessToken creates a STATIC session that does NOT auto-refresh.
+    #   IMDS tokens expire after ~1 hour.  For long-running assessments
+    #   (3+ hours), every Graph call after expiry returns HTTP 401.
+    #
+    #   -Identity -ClientId registers ManagedIdentityCredential inside the
+    #   Graph SDK.  Azure.Identity calls IMDS on-demand and transparently
+    #   refreshes the token before expiry — no manual handling needed.
+    #
+    #   -ContextScope Process isolates this session from any persisted
+    #   CurrentUser token cache on the Hybrid Worker VM, preventing
+    #   cross-run interference.
+    #
+    # PREREQUISITE (already met):
+    #   MSI env vars (IDENTITY_ENDPOINT, MSI_ENDPOINT, etc.) were cleared
+    #   above (lines 934-941), forcing Azure.Identity to use VM IMDS
+    #   directly instead of the Automation Account's token endpoint.
+    Write-Log "Calling Connect-MgGraph -Identity -ClientId (live UAMI credential with auto-refresh)..."
     try {
-        $secureGraphToken = ConvertTo-SecureString $graphToken.access_token -AsPlainText -Force
-        Connect-MgGraph -AccessToken $secureGraphToken -NoWelcome | Out-Null
+        Connect-MgGraph -Identity -ClientId $uamiClientId -ContextScope Process -NoWelcome | Out-Null
         Write-Log "Connect-MgGraph (UAMI) -- OK"
     }
     catch {
         Write-MiDiagnostic -Code "MI-UAMI-023" -Context "Stage 2 -- Connect-MgGraph" `
-            -Message "Failed to connect to Microsoft Graph using the IMDS-issued Graph token." `
+            -Message "Failed to connect to Microsoft Graph using the UAMI identity credential." `
             -Detail $_.Exception.Message `
-            -Resolution "Confirm the IMDS Graph token is valid and the UAMI has the required Graph application permissions with admin consent."
+            -Resolution "Confirm the UAMI has the required Graph application permissions with admin consent."
         throw $_
     }
 
@@ -1500,6 +1517,41 @@ function global:Invoke-ZtTenantInfo {
             Invoke-Safely 'Add-ZTDeviceCompliancePolicies'  { Add-ZTDeviceCompliancePolicies }
             Invoke-Safely 'Add-ZTDeviceAppProtectionPolicies' { Add-ZTDeviceAppProtectionPolicies }
         }
+    }
+}
+
+# ── Ensure MgGraph session is usable before the long-running Invoke-ZtAssessment ──
+# Belt-and-suspenders: verify the session can still talk to Graph.
+# With -Identity the SDK auto-refreshes, but if the session somehow
+# dropped (e.g. module reload, scope change), re-authenticate now rather
+# than failing 20 minutes into Stage 4.
+Write-Log "Verifying Graph session before Stage 4..."
+try {
+    $preStage4Ctx = Get-MgContext -ErrorAction Stop
+    if (-not $preStage4Ctx) { throw "No active Graph context." }
+    # Quick probe to confirm actual API connectivity
+    Invoke-MgGraphRequest -Uri "https://graph.microsoft.com/v1.0/organization?`$select=id" `
+        -Method GET -ErrorAction Stop | Out-Null
+    Write-Log "  Graph session verified OK (AuthType=$($preStage4Ctx.AuthType))"
+}
+catch {
+    Write-Log "  Graph session check failed: $($_.Exception.Message) — reconnecting..." "WARN"
+    try {
+        if ($authMethod -eq 'ManagedIdentity') {
+            Connect-MgGraph -Identity -ClientId $uamiClientId -ContextScope Process -NoWelcome | Out-Null
+            Write-Log "  Graph re-connected logging in via UAMI OK"
+        }
+        else {
+            Connect-MgGraph -ClientSecretCredential $cred -TenantId $targetTenantId -NoWelcome -ContextScope Process | Out-Null
+            Write-Log "  Graph re-connected logging in via App Registration OK"
+        }
+    }
+    catch {
+        Add-ErrorLogEntry -Stage 'Stage 4' -Component 'Graph session refresh' `
+            -Message "Failed to re-establish Graph session before assessment." `
+            -Detail $_.Exception.Message `
+            -Resolution "Check Identity permissions." `
+            -Severity 'ERROR'
     }
 }
 
