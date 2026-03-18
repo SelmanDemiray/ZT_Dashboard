@@ -48,40 +48,48 @@ export async function fetchTenantIndex(): Promise<TenantIndex> {
 export async function fetchZeroTrust(
     tenantId: string,
     subscriptionId: string,
-    date: string
+    date: string,
+    noCache = false
 ): Promise<ZeroTrust> {
     return fetchJson<ZeroTrust>(
-        `${tenantId}/${subscriptionId}/${date}/zero-trust.json`
+        `${tenantId}/${subscriptionId}/${date}/zero-trust.json`,
+        noCache
     );
 }
 
 export async function fetchPolicyCompliance(
     tenantId: string,
     subscriptionId: string,
-    date: string
+    date: string,
+    noCache = false
 ): Promise<PolicyCompliance> {
     return fetchJson<PolicyCompliance>(
-        `${tenantId}/${subscriptionId}/${date}/policy-compliance.json`
+        `${tenantId}/${subscriptionId}/${date}/policy-compliance.json`,
+        noCache
     );
 }
 
 export async function fetchDefenderRecs(
     tenantId: string,
     subscriptionId: string,
-    date: string
+    date: string,
+    noCache = false
 ): Promise<DefenderRecs> {
     return fetchJson<DefenderRecs>(
-        `${tenantId}/${subscriptionId}/${date}/defender-recs.json`
+        `${tenantId}/${subscriptionId}/${date}/defender-recs.json`,
+        noCache
     );
 }
 
 export async function fetchGovernance(
     tenantId: string,
     subscriptionId: string,
-    date: string
+    date: string,
+    noCache = false
 ): Promise<Governance> {
     return fetchJson<Governance>(
-        `${tenantId}/${subscriptionId}/${date}/governance.json`
+        `${tenantId}/${subscriptionId}/${date}/governance.json`,
+        noCache
     );
 }
 
@@ -90,12 +98,15 @@ export async function fetchRunSnapshot(
     subscriptionId: string,
     date: string
 ): Promise<RunSnapshot> {
+    // The `latest/*` URLs are constant over time, so browser/proxy caching can cause stale data
+    // unless we explicitly bypass cache for those requests.
+    const noCache = date === 'latest';
     const [zeroTrust, policyCompliance, defenderRecs, governance] =
         await Promise.all([
-            fetchZeroTrust(tenantId, subscriptionId, date),
-            fetchPolicyCompliance(tenantId, subscriptionId, date),
-            fetchDefenderRecs(tenantId, subscriptionId, date),
-            fetchGovernance(tenantId, subscriptionId, date),
+            fetchZeroTrust(tenantId, subscriptionId, date, noCache),
+            fetchPolicyCompliance(tenantId, subscriptionId, date, noCache),
+            fetchDefenderRecs(tenantId, subscriptionId, date, noCache),
+            fetchGovernance(tenantId, subscriptionId, date, noCache),
         ]);
 
     return { date, zeroTrust, policyCompliance, defenderRecs, governance };

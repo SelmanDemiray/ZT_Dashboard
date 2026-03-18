@@ -42,16 +42,28 @@ export function OverviewCards() {
         let cancelled = false;
         setLoading(true);
 
-        const latestDate = availableDates[availableDates.length - 1];
-
         const tasks = availableSubscriptions.map(async (sub) => {
-            const subDates = sub.dates ?? availableDates;
-            const latestSubDate = subDates[subDates.length - 1] ?? latestDate;
+            // Always use the dedicated 'latest' folder for the most recent snapshot
             const [latest, all] = await Promise.all([
-                fetchRunSnapshot(filters.tenantId, sub.id, latestSubDate).catch(() => null),
-                fetchAllSnapshots(filters.tenantId, sub.id, subDates.slice(-6)).catch(() => []),
+                fetchRunSnapshot(filters.tenantId, sub.id, 'latest').catch(() => null),
+                fetchAllSnapshots(
+                    filters.tenantId,
+                    sub.id,
+                    (sub.dates ?? availableDates).slice(-6)
+                ).catch(() => []),
             ]);
-            return { sub, latestSnapshot: latest, allSnapshots: all };
+            // Ensure historical/trend-style cards always include the latest snapshot
+            // even if `tenant-index.json` is temporarily behind.
+            const mergedAll = (() => {
+                if (!latest) return all;
+                const byDate = new Map<string, RunSnapshot>();
+                for (const s of [...all, latest]) byDate.set(s.date, s);
+                return Array.from(byDate.values()).sort(
+                    (a, b) => new Date(a.date).getTime() - new Date(b.date).getTime()
+                );
+            })();
+
+            return { sub, latestSnapshot: latest, allSnapshots: mergedAll };
         });
 
         Promise.all(tasks).then((results) => {

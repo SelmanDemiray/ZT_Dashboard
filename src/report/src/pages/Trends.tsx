@@ -1,6 +1,6 @@
 import { useState, useEffect, useReducer, useCallback, useMemo } from 'react';
 import { useGlobalFilters } from '@/contexts/GlobalFilterContext';
-import { fetchAllSnapshots } from '@/services/blobService';
+import { fetchAllSnapshots, fetchRunSnapshot } from '@/services/blobService';
 import { TrendsFilterBar } from '@/components/trends/TrendsFilterBar';
 import { PostureScoreTimeline } from '@/components/trends/PostureScoreTimeline';
 import { StackedAreaCards } from '@/components/trends/StackedAreaCards';
@@ -73,9 +73,24 @@ export default function Trends() {
         setLoading(true);
         setError(null);
 
-        fetchAllSnapshots(filters.tenantId, filters.subscriptionId, availableDates)
-            .then((data) => {
-                if (!cancelled) setSnapshots(data);
+        Promise.all([
+            fetchAllSnapshots(filters.tenantId, filters.subscriptionId, availableDates),
+            fetchRunSnapshot(filters.tenantId, filters.subscriptionId, 'latest').catch(() => null),
+        ])
+            .then(([data, latestSnapshot]) => {
+                if (cancelled) return;
+
+                if (!latestSnapshot) {
+                    setSnapshots(data);
+                    return;
+                }
+
+                const byDate = new Map<string, RunSnapshot>();
+                for (const s of [...data, latestSnapshot]) byDate.set(s.date, s);
+                const merged = Array.from(byDate.values()).sort(
+                    (a, b) => new Date(a.date).getTime() - new Date(b.date).getTime()
+                );
+                setSnapshots(merged);
             })
             .catch((err) => {
                 if (!cancelled) setError(String(err));
