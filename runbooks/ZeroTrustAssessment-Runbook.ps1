@@ -978,14 +978,6 @@ if ($authMethod -eq 'ManagedIdentity') {
     }
 
     # ── Connect-MgGraph ───────────────────────────────────────────────────
-    # Pass the pre-fetched IMDS Graph token as a SecureString.
-    # This avoids any WAM/interactive prompt on the Hybrid Worker.
-    # ROOT CAUSE FIX (token expiry):
-    #   Previous code used: Connect-MgGraph -AccessToken $secureGraphToken
-    #   -AccessToken creates a STATIC session that does NOT auto-refresh.
-    #   IMDS tokens expire after ~1 hour.  For long-running assessments
-    #   (3+ hours), every Graph call after expiry returns HTTP 401.
-    #
     #   -Identity -ClientId registers ManagedIdentityCredential inside the
     #   Graph SDK.  Azure.Identity calls IMDS on-demand and transparently
     #   refreshes the token before expiry — no manual handling needed.
@@ -1038,10 +1030,10 @@ elseif ($authMethod -eq 'AppRegistration') {
     }
     catch {
         Write-DiagnosticError `
-            -Context "Stage 2 -- Connect-AzAccount (AppRegistration)" `
-            -Message "Failed to authenticate to Azure with the App Registration credentials." `
+            -Context "Stage 2 -- Connect-AzAccount" `
+            -Message "Failed to authenticate to Azure using Service Principal." `
             -Detail $_.Exception.Message `
-            -Resolution "Verify AppClientId and AppClientSecret are correct. Check the secret has not expired."
+            -Resolution "Ensure AppClientId and AppClientSecret are valid and have not expired."
         throw $_
     }
 
@@ -1052,9 +1044,9 @@ elseif ($authMethod -eq 'AppRegistration') {
     catch {
         Write-DiagnosticError `
             -Context "Stage 2 -- Connect-MgGraph (AppRegistration)" `
-            -Message "Azure auth succeeded but Microsoft Graph auth failed." `
+            -Message "Azure auth succeeded but Microsoft Graph token bootstrap failed." `
             -Detail $_.Exception.Message `
-            -Resolution "Assign 'Global Reader' role to the App Registration service principal in Entra ID."
+            -Resolution "Ensure AppClientId has the required App Roles assigned in Entra ID."
         throw $_
     }
 
@@ -1105,7 +1097,7 @@ if ($targetSubscriptionIds.Count -eq 0) {
     Write-DiagnosticError `
         -Context "Stage 2b -- Subscription discovery" `
         -Message "No enabled subscriptions found in tenant '$targetTenantId'." `
-        -Resolution "$rbacMsg  Fix: Azure Portal > Subscriptions > IAM > Add role assignment > Reader."
+        -Detail "$rbacMsg  Fix: Azure Portal > Subscriptions > IAM > Add role assignment > Reader."
     throw "No enabled subscriptions found. $rbacMsg"
 }
 
@@ -1417,125 +1409,59 @@ $env:MicrosoftGraphHttpVersion = "HTTP11"
 Write-Log "Overriding Test-ZtContext (app-only auth bypass -- permissions validated in Stage 2c)..."
 function global:Test-ZtContext { return $true }
 
-# Override Add-ZtDeviceWindowsEnrollment to gracefully handle the delegated-only
-# Policies/MobileDeviceManagementPolicies beta endpoint.
-# ROOT CAUSE: This endpoint returns HTTP 401 "Unsupported app-only call" when
-# called with a Managed Identity (app-only) token because it is delegated-only.
-# Without this override, the error terminates Invoke-ZtAssessment entirely.
-Write-Log "Overriding Add-ZtDeviceWindowsEnrollment (delegated-only API graceful skip)..."
-function global:Add-ZtDeviceWindowsEnrollment {
-    [CmdletBinding()]
-    param ()
-    $activity = "Getting Windows enrollment summary"
-    Write-ZtProgress -Activity $activity -Status "Processing"
-    try {
-        $policies = Invoke-ZtGraphRequest -RelativeUri 'Policies/MobileDeviceManagementPolicies' `
-            -QueryParameters @{ '$expand' = 'includedGroups' } -ApiVersion 'beta'
-        $sortedPolicies = $policies | Sort-Object @{Expression='appliesTo';Descending=$true}, @{Expression='displayName';Ascending=$true}
-        $tableData = @()
-        foreach ($policy in $sortedPolicies) {
-            $groupNames = if ($policy.appliesTo -eq 'selected' -and $policy.includedGroups) {
-                ($policy.includedGroups | ForEach-Object { $_.displayName }) -join ', '
-            } else { 'Not Applicable' }
-            $appliesToName = switch ($policy.appliesTo) {
-                'all'      { 'All' }
-                'selected' { 'Selected' }
-                'none'     { 'None' }
-                default    { $policy.appliesTo }
+# ── Inject Resilient Wrapper into Module Scope ───────────────────────────
+# Some specific API calls inside the generic `Add-ZtDeviceWindowsEnrollment`
+# (specifically `Policies/MobileDeviceManagementPolicies`) are Delegated-only
+# endpoints. If called with an App-only token (e.g. from a UAMI or SP), Microsoft
+# Graph rejects them with an unrecoverable 401 Unauthorized.
+#
+# Because powerShell module functions execute inside an isolated SessionState,
+# defining a `global:xyz` function in the runbook does NOT override internal
+# module calls. Instead, we pull the module object and explicitly inject our
+# 401-trapping try/catch wrapper directly into its internal `script:` scope,
+# surgically intercepting just the failing function.
+Write-Log "Injecting resilient Add-ZtDeviceWindowsEnrollment wrapper into ZeroTrustAssessment module scope..."
+try {
+    $ztModule = Get-Module ZeroTrustAssessment -ErrorAction SilentlyContinue
+    if (-not $ztModule) { $ztModule = Import-Module ZeroTrustAssessment -PassThru -ErrorAction Stop }
+
+    & $ztModule {
+        # Rename the original function so we can wrap it
+        Rename-Item -Path "Function:\Add-ZtDeviceWindowsEnrollment" -NewName "Add-ZtDeviceWindowsEnrollment_Original" -ErrorAction Stop
+        
+        function script:Add-ZtDeviceWindowsEnrollment {
+            try {
+                Add-ZtDeviceWindowsEnrollment_Original
             }
-            $tableData += [PSCustomObject]@{
-                Type       = 'MDM'
-                PolicyName = $policy.displayName
-                AppliesTo  = $appliesToName
-                Groups     = $groupNames
+            catch {
+                $msg = $_.Exception.Message
+                if ($msg -match 'Unsupported app.only|Interactive_Required|delegated|401|403') {
+                    Write-PSFMessage -Level Warning -Message "Delegated-only API skipped during app-only execution: Add-ZtDeviceWindowsEnrollment"
+                }
+                else {
+                    Write-PSFMessage -Level Warning -Message "Unexpected error in Add-ZtDeviceWindowsEnrollment : $msg" -ErrorRecord $_
+                }
             }
         }
-        Add-ZtTenantInfo -Name "ConfigWindowsEnrollment" -Value $tableData
     }
-    catch {
-        Write-Log "[SKIP] Add-ZtDeviceWindowsEnrollment: MobileDeviceManagementPolicies is delegated-only, not available under app-only auth. Error: $($_.Exception.Message)" "WARN"
-        Add-ZtTenantInfo -Name "ConfigWindowsEnrollment" -Value @()
-    }
-    Write-ZtProgress -Activity $activity -Status "Completed"
+    Write-Log "  Module override injected successfully."
 }
-
-# Override Invoke-ZtTenantInfo to wrap each sub-function in try/catch.
-# This prevents a single delegated-only API failure (e.g. sign-in logs being
-# empty when auditLogs/signIns returns 401 for app-only auth) from crashing
-# the entire assessment. Each function gracefully falls back to empty data.
-Write-Log "Overriding Invoke-ZtTenantInfo (resilient wrapper for app-only auth)..."
-function global:Invoke-ZtTenantInfo {
-    [CmdletBinding()]
-    param (
-        $Database,
-        [ValidateSet('All', 'Identity', 'Devices', 'Network', 'Data')]
-        [string]$Pillar = 'All'
-    )
-
-    # Helper: run a function with try/catch, log failures but never throw
-    function Invoke-Safely {
-        param([string]$Name, [scriptblock]$Block)
-        try {
-            Write-Log "  [TenantInfo] Running $Name..."
-            & $Block
-            Write-Log "  [TenantInfo] $Name -- OK"
-        }
-        catch {
-            $msg = $_.Exception.Message
-            # Detect delegated-only / app-only auth errors
-            if ($msg -match 'Unsupported app.only|Interactive_Required|delegated|401|403') {
-                Add-ErrorLogEntry -Stage 'Stage 4 -- TenantInfo' -Component $Name `
-                    -Message "Delegated-only API not available under app-only auth." `
-                    -Detail $msg `
-                    -Resolution "This data requires interactive sign-in. The dashboard will show 'No data available' for this section." `
-                    -Severity 'SKIP'
-            }
-            else {
-                Add-ErrorLogEntry -Stage 'Stage 4 -- TenantInfo' -Component $Name `
-                    -Message "Unexpected error." `
-                    -Detail $msg `
-                    -Severity 'ERROR'
-            }
-        }
-    }
-
-    Invoke-Safely 'Add-ZtTenantOverview' { Add-ZtTenantOverview }
-
-    if ($Pillar -in ('All', 'Identity')) {
-        Invoke-Safely 'Add-ZtOverviewCaMfa'                      { Add-ZtOverviewCaMfa -Database $Database }
-        Invoke-Safely 'Add-ZtOverviewCaDevicesAllUsers'           { Add-ZtOverviewCaDevicesAllUsers -Database $Database }
-        Invoke-Safely 'Add-ZtOverviewAuthMethodsAllUsers'         { Add-ZtOverviewAuthMethodsAllUsers -Database $Database }
-        Invoke-Safely 'Add-ZtOverviewAuthMethodsPrivilegedUsers'  { Add-ZtOverviewAuthMethodsPrivilegedUsers -Database $Database }
-    }
-
-    if ($Pillar -in ('All', 'Devices')) {
-        $IntunePlan = Get-ZtLicenseInformation -Product Intune
-        if ($null -ne $IntunePlan) {
-            Invoke-Safely 'Add-ZtDeviceOverview'            { Add-ZtDeviceOverview -Database $Database }
-            Invoke-Safely 'Add-ZtDeviceWindowsEnrollment'   { Add-ZtDeviceWindowsEnrollment }
-            Invoke-Safely 'Add-ZtDeviceEnrollmentRestriction' { Add-ZtDeviceEnrollmentRestriction }
-            Invoke-Safely 'Add-ZTDeviceCompliancePolicies'  { Add-ZTDeviceCompliancePolicies }
-            Invoke-Safely 'Add-ZTDeviceAppProtectionPolicies' { Add-ZTDeviceAppProtectionPolicies }
-        }
-    }
+catch {
+    Write-Log "Failed to inject resilient wrapper: $($_.Exception.Message)" "WARN"
 }
 
 # ── Ensure MgGraph session is usable before the long-running Invoke-ZtAssessment ──
 # Belt-and-suspenders: verify the session can still talk to Graph.
-# With -Identity the SDK auto-refreshes, but if the session somehow
-# dropped (e.g. module reload, scope change), re-authenticate now rather
-# than failing 20 minutes into Stage 4.
 Write-Log "Verifying Graph session before Stage 4..."
 try {
     $preStage4Ctx = Get-MgContext -ErrorAction Stop
     if (-not $preStage4Ctx) { throw "No active Graph context." }
     # Quick probe to confirm actual API connectivity
-    Invoke-MgGraphRequest -Uri "https://graph.microsoft.com/v1.0/organization?`$select=id" `
-        -Method GET -ErrorAction Stop | Out-Null
+    Invoke-MgGraphRequest -Uri "https://graph.microsoft.com/v1.0/organization?`$select=id" -Method GET -ErrorAction Stop | Out-Null
     Write-Log "  Graph session verified OK (AuthType=$($preStage4Ctx.AuthType))"
 }
 catch {
-    Write-Log "  Graph session check failed: $($_.Exception.Message) — reconnecting..." "WARN"
+    Write-Log "  Graph session check failed: $($_.Exception.Message) - reconnecting..." "WARN"
     try {
         if ($authMethod -eq 'ManagedIdentity') {
             Connect-MgGraph -Identity -ClientId $uamiClientId -ContextScope Process -NoWelcome | Out-Null
@@ -1547,11 +1473,7 @@ catch {
         }
     }
     catch {
-        Add-ErrorLogEntry -Stage 'Stage 4' -Component 'Graph session refresh' `
-            -Message "Failed to re-establish Graph session before assessment." `
-            -Detail $_.Exception.Message `
-            -Resolution "Check Identity permissions." `
-            -Severity 'ERROR'
+        Add-ErrorLogEntry -Stage 'Stage 4' -Component 'Graph session refresh' -Message "Failed to re-establish Graph session before assessment." -Detail $_.Exception.Message -Resolution "Check Identity permissions." -Severity 'ERROR'
     }
 }
 
@@ -1564,11 +1486,7 @@ try {
     Write-Log "Invoke-ZtAssessment -- completed OK"
 }
 catch {
-    Add-ErrorLogEntry -Stage 'Stage 4' -Component 'Invoke-ZtAssessment' `
-        -Message "The Zero Trust Assessment cmdlet threw an error." `
-        -Detail $_.Exception.Message `
-        -Resolution "1. Identity needs 'Global Reader' in Entra ID. 2. Check Microsoft.Graph.* modules are up to date." `
-        -Severity 'ERROR'
+    Add-ErrorLogEntry -Stage 'Stage 4' -Component 'Invoke-ZtAssessment' -Message "The Zero Trust Assessment cmdlet threw an error." -Detail $_.Exception.Message -Resolution "1. Identity needs 'Global Reader' in Entra ID. 2. Check Microsoft.Graph.* modules are up to date." -Severity 'ERROR'
     Write-Log "Stage 4 FAILED but continuing to upload whatever data is available..." "ERROR"
 }
 
@@ -2173,6 +2091,17 @@ if ($script:ErrorLog.Count -gt 0) {
 }
 else {
     Write-Log "No errors recorded. Clean run!"
+}
+
+# Cleanup the background token refresher if it exists
+if ($null -ne $powershellJob) {
+    try {
+        $powershellJob.Stop()
+        $powershellJob.Dispose()
+        $refresherRunspace.Close()
+        $refresherRunspace.Dispose()
+        Write-Log "Cleaned up background token refresher runspace."
+    } catch {}
 }
 
 Write-Log "=== ALL STAGES COMPLETE ==="
