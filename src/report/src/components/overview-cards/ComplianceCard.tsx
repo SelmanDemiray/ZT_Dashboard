@@ -1,4 +1,5 @@
 import { useState, useMemo } from 'react';
+import { displaySubName } from '@/lib/format-sub-name';
 import {
     PieChart,
     Pie,
@@ -125,7 +126,7 @@ export function ComplianceCard({ subscriptions, subDataMap, defaultSubId }: Prop
                             onClick={e => e.stopPropagation()}
                             className="h-7 rounded-lg border bg-background/80 px-2 text-xs focus:outline-none focus:ring-2 focus:ring-ring"
                         >
-                            {subscriptions.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                            {subscriptions.map(s => <option key={s.id} value={s.id}>{displaySubName(s)}</option>)}
                         </select>
                     </div>
                     <span className="text-sm text-muted-foreground">No policy compliance data</span>
@@ -364,7 +365,7 @@ export function ComplianceCard({ subscriptions, subDataMap, defaultSubId }: Prop
                                                 {/* RG breakdown when hovered */}
                                                 {isHovered && Object.keys(rgMap).length > 0 && (
                                                     <div className="mt-1.5 grid grid-cols-2 gap-1 pl-1">
-                                                        {Object.entries(rgMap).slice(0, 6).map(([rg, resources]) => {
+                                                        {Object.entries(rgMap).slice(0, 12).map(([rg, resources]) => {
                                                             const compliantInRG = resources.filter(r => r.state === 'Compliant').length;
                                                             return (
                                                                 <div key={rg} className="flex items-center justify-between text-[10px] bg-background/60 rounded px-1.5 py-0.5">
@@ -375,6 +376,11 @@ export function ComplianceCard({ subscriptions, subDataMap, defaultSubId }: Prop
                                                                 </div>
                                                             );
                                                         })}
+                                                        {Object.keys(rgMap).length > 12 && (
+                                                            <div className="col-span-2 text-center text-[10px] text-muted-foreground italic pt-1">
+                                                                +{Object.keys(rgMap).length - 12} more RGs…
+                                                            </div>
+                                                        )}
                                                     </div>
                                                 )}
                                             </div>

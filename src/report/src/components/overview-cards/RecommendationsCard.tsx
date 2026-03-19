@@ -1,4 +1,6 @@
 import { useState, useMemo } from 'react';
+import { displaySubName } from '@/lib/format-sub-name';
+import { useShowMore } from '@/hooks/useShowMore';
 import {
     BarChart, Bar, XAxis, YAxis, CartesianGrid, ResponsiveContainer, Tooltip, Cell,
 } from 'recharts';
@@ -60,9 +62,35 @@ export function RecommendationsCard({ subscriptions, subDataMap, defaultSubId }:
 
     if (!data) {
         return (
-            <div className="glass-card gradient-border p-6 flex items-center justify-center text-muted-foreground h-48">
-                <ShieldAlert size={20} className="mr-2 opacity-50" />
+            <div className="glass-card gradient-border p-6 flex flex-col items-center justify-center text-muted-foreground h-48 gap-3">
+                <ShieldAlert size={20} className="opacity-50" />
                 No recommendation data
+                <select
+                    value={subId}
+                    onChange={e => setSubId(e.target.value)}
+                    className="h-7 rounded-md border border-input bg-background/50 px-2 text-xs focus:outline-none"
+                >
+                    {subscriptions.map(s => <option key={s.id} value={s.id}>{displaySubName(s)}</option>)}
+                </select>
+            </div>
+        );
+    }
+
+    if (data.recommendations.length === 0) {
+        return (
+            <div className="glass-card gradient-border p-6 flex flex-col items-center justify-center h-48 gap-3 text-center">
+                <ShieldAlert size={32} className="text-emerald-500/40" />
+                <h3 className="text-sm font-semibold text-foreground">No Defender Recommendations</h3>
+                <p className="text-xs text-muted-foreground max-w-[300px]">
+                    No open recommendations exist for this subscription. Ensure Defender plans are enabled.
+                </p>
+                <select
+                    value={subId}
+                    onChange={e => setSubId(e.target.value)}
+                    className="h-7 rounded-md border border-input bg-background/50 px-2 text-xs focus:outline-none"
+                >
+                    {subscriptions.map(s => <option key={s.id} value={s.id}>{displaySubName(s)}</option>)}
+                </select>
             </div>
         );
     }
@@ -83,7 +111,7 @@ export function RecommendationsCard({ subscriptions, subDataMap, defaultSubId }:
                             className="h-7 rounded-md border border-input bg-background px-2 text-xs focus:outline-none focus:ring-1 focus:ring-ring"
                         >
                             {subscriptions.map(s => (
-                                <option key={s.id} value={s.id}>{s.name}</option>
+                                <option key={s.id} value={s.id}>{displaySubName(s)}</option>
                             ))}
                         </select>
                         <select
@@ -230,21 +258,7 @@ function RecItem({ rec, sev, isExpanded, onToggle }: {
                         <span className="text-muted-foreground">Remediation:</span>{' '}
                         <span className="text-foreground">{rec.remediation}</span>
                     </div>
-                    {/* Affected resources */}
-                    <div className="space-y-0.5">
-                        <p className="text-[10px] text-muted-foreground font-medium">Affected Resources:</p>
-                        {rec.affectedResources.slice(0, 3).map(ar => (
-                            <div key={ar.id} className="flex items-center gap-1.5 text-[10px]">
-                                <span className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ background: sev.color }} />
-                                <span className="truncate">{ar.name}</span>
-                                <span className="text-muted-foreground/50">·</span>
-                                <span className="text-muted-foreground/70 truncate">{ar.type.split('/').pop()}</span>
-                            </div>
-                        ))}
-                        {rec.affectedResources.length > 3 && (
-                            <p className="text-[10px] text-muted-foreground italic">+{rec.affectedResources.length - 3} more</p>
-                        )}
-                    </div>
+                    <AffectedResources resources={rec.affectedResources} sev={sev} />
                     {/* Learn more */}
                     {rec.learnMoreUrl && (
                         <a
@@ -261,3 +275,31 @@ function RecItem({ rec, sev, isExpanded, onToggle }: {
         </div>
     );
 }
+
+function AffectedResources({ resources, sev }: { resources: NonNullable<DefenderRecs['recommendations'][0]>['affectedResources'], sev: any }) {
+    const { limit, showMore, hasMore } = useShowMore(10);
+    const visible = resources.slice(0, limit);
+
+    return (
+        <div className="space-y-0.5">
+            <p className="text-[10px] text-muted-foreground font-medium">Affected Resources:</p>
+            {visible.map(ar => (
+                <div key={ar.id} className="flex items-center gap-1.5 text-[10px]">
+                    <span className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ background: sev.color }} />
+                    <span className="truncate">{ar.name}</span>
+                    <span className="text-muted-foreground/50">·</span>
+                    <span className="text-muted-foreground/70 truncate">{ar.type.split('/').pop()}</span>
+                </div>
+            ))}
+            {hasMore(resources.length) && (
+                <button
+                    onClick={(e) => { e.stopPropagation(); showMore(); }}
+                    className="mt-1 w-full text-left text-[10px] text-primary hover:underline"
+                >
+                    + Show {Math.min(resources.length - limit, 10)} more ({resources.length - limit} left)
+                </button>
+            )}
+        </div>
+    );
+}
+

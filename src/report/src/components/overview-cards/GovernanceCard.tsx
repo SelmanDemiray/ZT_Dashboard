@@ -1,4 +1,5 @@
 import { useState, useMemo } from 'react';
+import { displaySubName } from '@/lib/format-sub-name';
 import {
     AlertTriangle, CheckCircle2, Clock, CircleDot,
     ChevronDown, ChevronUp, Filter, Info, User,
@@ -83,7 +84,7 @@ export function GovernanceCard({ subscriptions, subDataMap, defaultSubId }: Prop
                             onChange={e => setSubId(e.target.value)}
                             className="h-7 rounded-lg border bg-background/80 px-2 text-xs focus:outline-none focus:ring-2 focus:ring-ring"
                         >
-                            {subscriptions.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                            {subscriptions.map(s => <option key={s.id} value={s.id}>{displaySubName(s)}</option>)}
                         </select>
                     </div>
                     <span className="text-sm text-muted-foreground">No governance data</span>
@@ -138,7 +139,7 @@ export function GovernanceCard({ subscriptions, subDataMap, defaultSubId }: Prop
                         onChange={e => { setSubId(e.target.value); setRgFilter(''); }}
                         className="h-7 max-w-[140px] rounded-lg border bg-background/80 px-2 text-[11px] font-medium focus:outline-none focus:ring-2 focus:ring-ring truncate"
                     >
-                        {subscriptions.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                        {subscriptions.map(s => <option key={s.id} value={s.id}>{displaySubName(s)}</option>)}
                     </select>
                     {availableRGs.length > 0 && (
                         <select
@@ -295,7 +296,7 @@ export function GovernanceCard({ subscriptions, subDataMap, defaultSubId }: Prop
                                             {rule.completionCriteria.length > 0 && (
                                                 <div className="space-y-0.5 pt-1 border-t">
                                                     <p className="text-muted-foreground font-medium">Completion criteria:</p>
-                                                    {rule.completionCriteria.slice(0, 4).map((c, i) => (
+                                                    {rule.completionCriteria.map((c, i) => (
                                                         <p key={i} className={c.completed ? 'text-emerald-500' : 'text-muted-foreground'}>
                                                             {c.completed ? '✓' : '○'} {c.description}
                                                         </p>

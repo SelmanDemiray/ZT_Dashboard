@@ -1,4 +1,5 @@
 import { useState, useMemo } from 'react';
+import { displaySubName } from '@/lib/format-sub-name';
 import { Scale, ChevronDown, ChevronUp, CheckCircle2, Clock, AlertTriangle, User, Calendar, Link2 } from 'lucide-react';
 import type { Governance, GovernanceStatus, TenantSubscription, RunSnapshot } from '@/types/assessment';
 
@@ -73,7 +74,7 @@ export function GovernanceRulesCard({ subscriptions, subDataMap, defaultSubId }:
                             className="h-7 rounded-md border border-input bg-background px-2 text-xs focus:outline-none focus:ring-1 focus:ring-ring"
                         >
                             {subscriptions.map(s => (
-                                <option key={s.id} value={s.id}>{s.name}</option>
+                                <option key={s.id} value={s.id}>{displaySubName(s)}</option>
                             ))}
                         </select>
                         <select

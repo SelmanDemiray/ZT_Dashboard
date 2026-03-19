@@ -1,6 +1,8 @@
 import { useState, useMemo } from 'react';
 import { BookOpen, Search, ChevronDown, ChevronUp, AlertTriangle, CheckCircle2, XCircle, Tag } from 'lucide-react';
 import type { PolicyCompliance, PolicyInitiative, PolicyResource, TenantSubscription, RunSnapshot } from '@/types/assessment';
+import { displaySubName } from '@/lib/format-sub-name';
+import { useShowMore } from '@/hooks/useShowMore';
 
 interface Props {
     subscriptions: TenantSubscription[];
@@ -79,7 +81,7 @@ export function PolicyExplorerCard({ subscriptions, subDataMap, defaultSubId }: 
 
     if (!data) {
         return (
-            <div className="glass-card gradient-border p-6 flex items-center justify-center text-muted-foreground h-48">
+            <div className="glass-card gradient-border p-6 flex flex-col items-center justify-center text-muted-foreground h-full min-h-[300px]">
                 <BookOpen size={20} className="mr-2 opacity-50" />
                 No policy data available
             </div>
@@ -87,7 +89,7 @@ export function PolicyExplorerCard({ subscriptions, subDataMap, defaultSubId }: 
     }
 
     return (
-        <div className="glass-card gradient-border scan-line overflow-hidden">
+        <div className="glass-card gradient-border scan-line overflow-hidden flex flex-col h-full">
             {/* Header */}
             <div className="p-4 sm:p-5 border-b border-border/50">
                 <div className="flex flex-wrap items-center justify-between gap-3">
@@ -102,7 +104,7 @@ export function PolicyExplorerCard({ subscriptions, subDataMap, defaultSubId }: 
                             className="h-7 rounded-md border border-input bg-background px-2 text-xs ring-offset-background focus:outline-none focus:ring-1 focus:ring-ring"
                         >
                             {subscriptions.map(s => (
-                                <option key={s.id} value={s.id}>{s.name}</option>
+                                <option key={s.id} value={s.id}>{displaySubName(s)}</option>
                             ))}
                         </select>
                         <select
@@ -158,8 +160,8 @@ export function PolicyExplorerCard({ subscriptions, subDataMap, defaultSubId }: 
                 </div>
             </div>
 
-            {/* Content */}
-            <div className="p-3 max-h-[320px] overflow-y-auto space-y-1.5">
+            {/* Content — flex-1 fills remaining height */}
+            <div className="p-3 flex-1 min-h-0 overflow-y-auto space-y-1.5">
                 {viewMode === 'initiatives' && <InitiativesList
                     initiatives={initiatives}
                     searchTerm={searchTerm}
@@ -182,6 +184,17 @@ export function PolicyExplorerCard({ subscriptions, subDataMap, defaultSubId }: 
 }
 
 /* ─── Sub-Components ──────────────────────────────────────────────── */
+
+function ShowMoreButton({ remaining, onClick }: { remaining: number; onClick: () => void }) {
+    return (
+        <button
+            onClick={onClick}
+            className="w-full mt-2 py-1.5 rounded-md text-xs font-medium text-primary hover:bg-primary/10 border border-primary/20 transition-all"
+        >
+            Show {Math.min(remaining, 50)} more ({remaining} remaining)
+        </button>
+    );
+}
 
 function MiniStat({ label, value, color }: { label: string; value: number; color?: string }) {
     return (
@@ -213,6 +226,7 @@ function InitiativesList({ initiatives, searchTerm, expandedId, setExpandedId }:
             {filtered.map(init => {
                 const pct = init.totalPolicies > 0 ? Math.round((init.compliantCount / init.totalPolicies) * 100) : 0;
                 const isExpanded = expandedId === init.id;
+                const nonCompliant = init.resources.filter(r => r.state !== 'Compliant');
                 return (
                     <div key={init.id} className="rounded-lg border border-border/50 bg-card/30 hover:bg-card/60 transition-all">
                         <button
@@ -260,21 +274,37 @@ function InitiativesList({ initiatives, searchTerm, expandedId, setExpandedId }:
                                         <p className="text-[9px] text-muted-foreground">Exempt</p>
                                     </div>
                                 </div>
-                                {/* Resource listing */}
-                                {init.resources.filter(r => r.state !== 'Compliant').slice(0, 4).map(r => (
-                                    <div key={r.resourceId} className="flex items-center gap-1.5 text-[10px] py-0.5">
-                                        <XCircle size={10} className="text-red-400 flex-shrink-0" />
-                                        <span className="truncate text-muted-foreground">{r.resourceName}</span>
-                                        <span className="text-muted-foreground/50">·</span>
-                                        <span className="truncate text-muted-foreground/70">{r.resourceGroup}</span>
-                                    </div>
-                                ))}
+                                {/* Resource listing — show up to 20 */}
+                                <ExpandableResourceList resources={nonCompliant} maxInitial={20} />
                             </div>
                         </div>
                     </div>
                 );
             })}
         </>
+    );
+}
+
+function ExpandableResourceList({ resources, maxInitial = 20 }: { resources: PolicyResource[]; maxInitial?: number }) {
+    const { limit, showMore, hasMore } = useShowMore(maxInitial);
+    const visible = resources.slice(0, limit);
+
+    if (resources.length === 0) return null;
+
+    return (
+        <div>
+            {visible.map(r => (
+                <div key={r.resourceId} className="flex items-center gap-1.5 text-[10px] py-0.5">
+                    <XCircle size={10} className="text-red-400 flex-shrink-0" />
+                    <span className="truncate text-muted-foreground">{r.resourceName}</span>
+                    <span className="text-muted-foreground/50">·</span>
+                    <span className="truncate text-muted-foreground/70">{r.resourceGroup}</span>
+                </div>
+            ))}
+            {hasMore(resources.length) && (
+                <ShowMoreButton remaining={resources.length - limit} onClick={showMore} />
+            )}
+        </div>
     );
 }
 
@@ -321,19 +351,8 @@ function PoliciesList({ policies, searchTerm, expandedId, setExpandedId }: {
                                 <p className="text-[10px] text-muted-foreground mb-1">
                                     From: <span className="font-medium text-foreground">{pol.initName}</span>
                                 </p>
-                                {pol.failingResources.slice(0, 5).map(r => (
-                                    <div key={r.resourceId} className="flex items-center gap-1.5 text-[10px] py-0.5">
-                                        <XCircle size={10} className="text-red-400 flex-shrink-0" />
-                                        <span className="truncate">{r.resourceName}</span>
-                                        <span className="text-muted-foreground/50">·</span>
-                                        <span className="truncate text-muted-foreground/70">{r.resourceGroup}</span>
-                                    </div>
-                                ))}
-                                {pol.failingResources.length > 5 && (
-                                    <p className="text-[10px] text-muted-foreground italic mt-1">
-                                        +{pol.failingResources.length - 5} more…
-                                    </p>
-                                )}
+                                {/* Show up to 20 failing resources with Show More */}
+                                <ExpandableResourceList resources={pol.failingResources} maxInitial={20} />
                             </div>
                         </div>
                     </div>
@@ -347,6 +366,8 @@ function ResourcesList({ resources, searchTerm }: {
     resources: (PolicyResource & { initName: string; initType: string })[];
     searchTerm: string;
 }) {
+    const { limit, showMore, hasMore } = useShowMore(50);
+
     const filtered = useMemo(() => {
         if (!searchTerm) return resources;
         const lower = searchTerm.toLowerCase();
@@ -361,9 +382,11 @@ function ResourcesList({ resources, searchTerm }: {
         return <p className="text-center text-xs text-muted-foreground py-4">No resources found.</p>;
     }
 
+    const visible = filtered.slice(0, limit);
+
     return (
         <div className="space-y-0.5">
-            {filtered.slice(0, 50).map(r => (
+            {visible.map(r => (
                 <div key={r.resourceId} className="flex items-center gap-2 p-2 rounded-md hover:bg-muted/30 transition-all text-xs">
                     {r.state === 'Compliant'
                         ? <CheckCircle2 size={13} className="text-green-500 flex-shrink-0" />
@@ -377,8 +400,8 @@ function ResourcesList({ resources, searchTerm }: {
                     <span className="text-[10px] text-muted-foreground truncate max-w-[80px]">{r.initName}</span>
                 </div>
             ))}
-            {filtered.length > 50 && (
-                <p className="text-center text-xs text-muted-foreground py-2 italic">Showing 50 of {filtered.length} resources</p>
+            {hasMore(filtered.length) && (
+                <ShowMoreButton remaining={filtered.length - limit} onClick={showMore} />
             )}
         </div>
     );

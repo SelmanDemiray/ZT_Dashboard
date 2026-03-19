@@ -1,4 +1,6 @@
 import { useState, useMemo } from 'react';
+import { displaySubName } from '@/lib/format-sub-name';
+import { useShowMore } from '@/hooks/useShowMore';
 import {
     BarChart, Bar, XAxis, YAxis, Tooltip as ReTooltip, Cell,
 } from 'recharts';
@@ -98,7 +100,7 @@ export function DefenderCard({ subscriptions, subDataMap, defaultSubId }: Props)
                             onChange={e => setSubId(e.target.value)}
                             className="h-7 rounded-lg border bg-background/80 px-2 text-xs focus:outline-none focus:ring-2 focus:ring-ring"
                         >
-                            {subscriptions.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                            {subscriptions.map(s => <option key={s.id} value={s.id}>{displaySubName(s)}</option>)}
                         </select>
                     </div>
                     <span className="text-sm text-muted-foreground">No Defender data</span>
@@ -150,7 +152,7 @@ export function DefenderCard({ subscriptions, subDataMap, defaultSubId }: Props)
                         onChange={e => { setSubId(e.target.value); setRgFilter(''); setSevFilter(''); }}
                         className="h-7 max-w-[140px] rounded-lg border bg-background/80 px-2 text-[11px] font-medium focus:outline-none focus:ring-2 focus:ring-ring truncate"
                     >
-                        {subscriptions.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                        {subscriptions.map(s => <option key={s.id} value={s.id}>{displaySubName(s)}</option>)}
                     </select>
                     {availableRGs.length > 0 && (
                         <select
@@ -274,88 +276,102 @@ export function DefenderCard({ subscriptions, subDataMap, defaultSubId }: Props)
                                     {filteredRecs.length} shown
                                 </span>
                             </h4>
-                            {filteredRecs.slice(0, 15).map((rec) => {
-                                const cfg = SEVERITY_CONFIG[rec.severity];
-                                const rgSet = [...new Set(rec.affectedResources.map(r => r.resourceGroup))];
-                                return (
-                                    <Tooltip key={rec.id}>
-                                        <TooltipTrigger asChild>
-                                            <div
-                                                className="flex items-start gap-3 rounded-xl border px-3 py-2.5 text-sm hover:bg-muted/50 transition-all hover:shadow-sm cursor-default"
-                                                onClick={e => e.stopPropagation()}
-                                            >
-                                                <span
-                                                    className="mt-0.5 text-[9px] font-bold uppercase px-1.5 py-0.5 rounded shrink-0"
-                                                    style={{ background: cfg.bg, color: cfg.color }}
-                                                >
-                                                    {cfg.label}
-                                                </span>
-                                                <div className="flex-1 min-w-0">
-                                                    <p className="font-medium truncate">{rec.name}</p>
-                                                    <div className="flex items-center gap-2 mt-0.5 flex-wrap">
-                                                        <span className="flex items-center gap-1 text-[10px] text-muted-foreground">
-                                                            <Server className="size-2.5" /> {rec.resourceCount} resources
-                                                        </span>
-                                                        {rgSet.length > 0 && (
-                                                            <span className="flex items-center gap-1 text-[10px] text-muted-foreground">
-                                                                <FolderOpen className="size-2.5" /> {rgSet.join(', ').slice(0, 30)}
-                                                            </span>
-                                                        )}
-                                                    </div>
-                                                </div>
-                                                {rec.hasAttackPath && (
-                                                    <Zap className="size-3.5 text-red-500 shrink-0 mt-0.5 animate-pulse" />
-                                                )}
-                                            </div>
-                                        </TooltipTrigger>
-                                        <TooltipContent side="left" className="max-w-[300px] text-xs space-y-2">
-                                            <p className="font-semibold">{rec.name}</p>
-                                            <p className="text-muted-foreground text-[11px]">{rec.description}</p>
-                                            <div className="space-y-0.5 pt-1 border-t">
-                                                <p><span className="text-muted-foreground">Category:</span> {rec.category}</p>
-                                                <p><span className="text-muted-foreground">Resources:</span> {rec.resourceCount}</p>
-                                                {rec.hasAttackPath && (
-                                                    <p className="text-red-400 flex items-center gap-1 font-semibold">
-                                                        <Zap className="size-3" /> Attack path detected
-                                                    </p>
-                                                )}
-                                                {rec.remediation && (
-                                                    <p className="text-emerald-600 dark:text-emerald-400 font-medium pt-1">
-                                                        Remediation: {rec.remediation}
-                                                    </p>
-                                                )}
-                                            </div>
-                                            {rec.affectedResources.slice(0, 3).map(r => (
-                                                <div key={r.id} className="flex items-center gap-1.5 text-[10px] text-muted-foreground">
-                                                    <Server className="size-2.5 shrink-0" />
-                                                    <span className="truncate">{r.name}</span>
-                                                    <span className="shrink-0 opacity-60">({r.resourceGroup})</span>
-                                                </div>
-                                            ))}
-                                            {rec.learnMoreUrl && (
-                                                <a
-                                                    href={rec.learnMoreUrl}
-                                                    target="_blank"
-                                                    rel="noreferrer"
-                                                    className="flex items-center gap-1 text-blue-500 hover:underline text-[10px] pt-1"
-                                                    onClick={e => e.stopPropagation()}
-                                                >
-                                                    <ExternalLink className="size-2.5" /> Learn more in Defender
-                                                </a>
-                                            )}
-                                        </TooltipContent>
-                                    </Tooltip>
-                                );
-                            })}
-                            {filteredRecs.length > 15 && (
-                                <p className="text-center text-[11px] text-muted-foreground pt-1">
-                                    +{filteredRecs.length - 15} more recommendations…
-                                </p>
-                            )}
+                            <DefenderRecsList recs={filteredRecs} subscriptions={subscriptions} subId={subId} />
                         </div>
                     </div>
                 </div>
             </div>
         </TooltipProvider>
+    );
+}
+
+/* Paginated recommendations list — shows 25 at a time */
+function DefenderRecsList({ recs }: { recs: DefenderRecs['recommendations']; subscriptions?: TenantSubscription[]; subId?: string }) {
+    const { limit, showMore, hasMore } = useShowMore(25);
+    const visible = recs.slice(0, limit);
+    return (
+        <>
+            {visible.map((rec) => {
+                const cfg = SEVERITY_CONFIG[rec.severity];
+                const rgSet = [...new Set(rec.affectedResources.map(r => r.resourceGroup))];
+                return (
+                    <Tooltip key={rec.id}>
+                        <TooltipTrigger asChild>
+                            <div
+                                className="flex items-start gap-3 rounded-xl border px-3 py-2.5 text-sm hover:bg-muted/50 transition-all hover:shadow-sm cursor-default"
+                                onClick={e => e.stopPropagation()}
+                            >
+                                <span
+                                    className="mt-0.5 text-[9px] font-bold uppercase px-1.5 py-0.5 rounded shrink-0"
+                                    style={{ background: cfg.bg, color: cfg.color }}
+                                >
+                                    {cfg.label}
+                                </span>
+                                <div className="flex-1 min-w-0">
+                                    <p className="font-medium truncate">{rec.name}</p>
+                                    <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+                                        <span className="flex items-center gap-1 text-[10px] text-muted-foreground">
+                                            <Server className="size-2.5" /> {rec.resourceCount} resources
+                                        </span>
+                                        {rgSet.length > 0 && (
+                                            <span className="flex items-center gap-1 text-[10px] text-muted-foreground">
+                                                <FolderOpen className="size-2.5" /> {rgSet.join(', ')}
+                                            </span>
+                                        )}
+                                    </div>
+                                </div>
+                                {rec.hasAttackPath && (
+                                    <Zap className="size-3.5 text-red-500 shrink-0 mt-0.5 animate-pulse" />
+                                )}
+                            </div>
+                        </TooltipTrigger>
+                        <TooltipContent side="left" className="max-w-[300px] text-xs space-y-2">
+                            <p className="font-semibold">{rec.name}</p>
+                            <p className="text-muted-foreground text-[11px]">{rec.description}</p>
+                            <div className="space-y-0.5 pt-1 border-t">
+                                <p><span className="text-muted-foreground">Category:</span> {rec.category}</p>
+                                <p><span className="text-muted-foreground">Resources:</span> {rec.resourceCount}</p>
+                                {rec.hasAttackPath && (
+                                    <p className="text-red-400 flex items-center gap-1 font-semibold">
+                                        <Zap className="size-3" /> Attack path detected
+                                    </p>
+                                )}
+                                {rec.remediation && (
+                                    <p className="text-emerald-600 dark:text-emerald-400 font-medium pt-1">
+                                        Remediation: {rec.remediation}
+                                    </p>
+                                )}
+                            </div>
+                            {rec.affectedResources.map(r => (
+                                <div key={r.id} className="flex items-center gap-1.5 text-[10px] text-muted-foreground">
+                                    <Server className="size-2.5 shrink-0" />
+                                    <span className="truncate">{r.name}</span>
+                                    <span className="shrink-0 opacity-60">({r.resourceGroup})</span>
+                                </div>
+                            ))}
+                            {rec.learnMoreUrl && (
+                                <a
+                                    href={rec.learnMoreUrl}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    className="flex items-center gap-1 text-blue-500 hover:underline text-[10px] pt-1"
+                                    onClick={e => e.stopPropagation()}
+                                >
+                                    <ExternalLink className="size-2.5" /> Learn more in Defender
+                                </a>
+                            )}
+                        </TooltipContent>
+                    </Tooltip>
+                );
+            })}
+            {hasMore(recs.length) && (
+                <button
+                    onClick={() => showMore()}
+                    className="w-full mt-2 py-1.5 rounded-md text-xs font-medium text-primary hover:bg-primary/10 border border-primary/20 transition-all"
+                >
+                    Show {Math.min(recs.length - limit, 25)} more ({recs.length - limit} remaining)
+                </button>
+            )}
+        </>
     );
 }

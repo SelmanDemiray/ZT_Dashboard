@@ -5,6 +5,8 @@ import {
 } from 'recharts';
 import { ShieldCheck, Filter, ChevronDown, ChevronUp, AlertTriangle, CheckCircle2, XCircle, FileWarning } from 'lucide-react';
 import type { PolicyCompliance, PolicyInitiative, TenantSubscription, RunSnapshot } from '@/types/assessment';
+import { displaySubName } from '@/lib/format-sub-name';
+import { useShowMore } from '@/hooks/useShowMore';
 
 interface Props {
     subscriptions: TenantSubscription[];
@@ -66,7 +68,7 @@ export function ComplianceDeepDiveCard({ subscriptions, subDataMap, defaultSubId
     /* Bar data — per-initiative compliance */
     const barData = useMemo(() =>
         filtered.map(init => ({
-            name: init.name.length > 22 ? init.name.slice(0, 22) + '…' : init.name,
+            name: init.name.length > 35 ? init.name.slice(0, 35) + '…' : init.name,
             fullName: init.name,
             compliant: init.compliantCount,
             nonCompliant: init.nonCompliantCount,
@@ -112,7 +114,7 @@ export function ComplianceDeepDiveCard({ subscriptions, subDataMap, defaultSubId
                             className="h-7 rounded-md border border-input bg-background px-2 text-xs ring-offset-background focus:outline-none focus:ring-1 focus:ring-ring"
                         >
                             {subscriptions.map(s => (
-                                <option key={s.id} value={s.id}>{s.name}</option>
+                                <option key={s.id} value={s.id}>{displaySubName(s)}</option>
                             ))}
                         </select>
                         {/* Type filter */}
@@ -304,28 +306,7 @@ export function ComplianceDeepDiveCard({ subscriptions, subDataMap, defaultSubId
 
                                             {/* Failing policies */}
                                             {failingResources.length > 0 && (
-                                                <div className="space-y-1">
-                                                    <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Failing Policies</p>
-                                                    {failingResources.slice(0, 5).map(r => (
-                                                        <div key={r.resourceId} className="flex items-start gap-2 text-xs py-1">
-                                                            <XCircle size={12} className="text-red-400 mt-0.5 flex-shrink-0" />
-                                                            <div className="min-w-0">
-                                                                <span className="font-medium truncate block">{r.resourceName}</span>
-                                                                <span className="text-muted-foreground text-[10px]">{r.resourceGroup}</span>
-                                                                {r.failingPolicies.map(fp => (
-                                                                    <span key={fp.id} className="block text-red-400/80 text-[10px]">
-                                                                        → {fp.name}
-                                                                    </span>
-                                                                ))}
-                                                            </div>
-                                                        </div>
-                                                    ))}
-                                                    {failingResources.length > 5 && (
-                                                        <p className="text-[10px] text-muted-foreground italic pl-5">
-                                                            +{failingResources.length - 5} more resources…
-                                                        </p>
-                                                    )}
-                                                </div>
+                                                <FailingResourcesList resources={failingResources} />
                                             )}
                                         </div>
                                     </div>
@@ -335,6 +316,39 @@ export function ComplianceDeepDiveCard({ subscriptions, subDataMap, defaultSubId
                     })}
                 </div>
             </div>
+        </div>
+    );
+}
+
+/* Paginated failing resources list */
+function FailingResourcesList({ resources }: { resources: ReturnType<PolicyInitiative['resources']['filter']> }) {
+    const { limit, showMore, hasMore } = useShowMore(20);
+    const visible = resources.slice(0, limit);
+    return (
+        <div className="space-y-1">
+            <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Failing Policies</p>
+            {visible.map(r => (
+                <div key={r.resourceId} className="flex items-start gap-2 text-xs py-1">
+                    <XCircle size={12} className="text-red-400 mt-0.5 flex-shrink-0" />
+                    <div className="min-w-0">
+                        <span className="font-medium truncate block">{r.resourceName}</span>
+                        <span className="text-muted-foreground text-[10px]">{r.resourceGroup}</span>
+                        {r.failingPolicies.map(fp => (
+                            <span key={fp.id} className="block text-red-400/80 text-[10px]">
+                                → {fp.name}
+                            </span>
+                        ))}
+                    </div>
+                </div>
+            ))}
+            {hasMore(resources.length) && (
+                <button
+                    onClick={() => showMore()}
+                    className="w-full mt-1 py-1 rounded-md text-[10px] font-medium text-primary hover:bg-primary/10 border border-primary/20 transition-all"
+                >
+                    Show more ({resources.length - limit} remaining)
+                </button>
+            )}
         </div>
     );
 }

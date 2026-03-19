@@ -49,7 +49,7 @@ export function OverviewCards() {
                 fetchAllSnapshots(
                     filters.tenantId,
                     sub.id,
-                    (sub.dates ?? availableDates).slice(-6)
+                    (sub.dates ?? availableDates).slice(-3)
                 ).catch(() => []),
             ]);
             // Ensure historical/trend-style cards always include the latest snapshot
