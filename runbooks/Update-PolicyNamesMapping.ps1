@@ -197,12 +197,22 @@ $mapping = [ordered]@{
 
 Write-Log "Fetching Policy Definitions via ARG..."
 try {
-    # Using Azure Resource Graph is typically the most efficient way to get all policies across the tenant
-    $query = "policyresources | where type =~ 'microsoft.authorization/policydefinitions' | project id, name, displayName = properties.displayName"
-    $policyResults = Search-AzGraph -Query $query -First 5000
-    
-    # Robust extraction of rows from Resource Graph result
-    $policyRows = @(if ($policyResults.PSObject.Properties.Name -contains 'Data') { $policyResults.Data } else { $policyResults })
+    $policyRows = @()
+    $pSkipToken = $null
+    do {
+        $pParams = @{
+            Query       = "policyresources | where type =~ 'microsoft.authorization/policydefinitions' | project id, name, displayName = properties.displayName"
+            First       = 1000
+            ErrorAction = 'Stop'
+        }
+        if ($pSkipToken) { $pParams['SkipToken'] = $pSkipToken }
+        
+        $pResults = Search-AzGraph @pParams
+        $pPage    = @(if ($pResults.PSObject.Properties.Name -contains 'Data') { $pResults.Data } else { $pResults })
+        $policyRows += $pPage
+        
+        $pSkipToken = if ($pResults.PSObject.Properties.Name -contains 'SkipToken') { $pResults.SkipToken } else { $null }
+    } while ($pSkipToken)
     
     foreach ($pol in $policyRows) {
         $policyId = $pol.name.ToString().ToLower()
@@ -219,7 +229,7 @@ try {
     foreach ($sub in $allSubs) {
         try {
             Set-AzContext -SubscriptionId $sub.Id -ErrorAction SilentlyContinue | Out-Null
-            $policies = Get-AzPolicyDefinition -ErrorAction SilentlyContinue
+            $policies = @(Get-AzPolicyDefinition -ErrorAction SilentlyContinue)
             foreach ($pol in $policies) {
                 $policyId = $pol.Name.ToLower()
                 $mapping.policies[$policyId] = $pol.Properties.DisplayName
@@ -233,11 +243,22 @@ try {
 
 Write-Log "Fetching Policy Set Definitions (Initiatives)..."
 try {
-    $querySets = "policyresources | where type =~ 'microsoft.authorization/policysetdefinitions' | project id, name, displayName = properties.displayName"
-    $setResults = Search-AzGraph -Query $querySets -First 5000
-    
-    # Robust extraction of rows from Resource Graph result
-    $setRows = @(if ($setResults.PSObject.Properties.Name -contains 'Data') { $setResults.Data } else { $setResults })
+    $setRows = @()
+    $sSkipToken = $null
+    do {
+        $sParams = @{
+            Query       = "policyresources | where type =~ 'microsoft.authorization/policysetdefinitions' | project id, name, displayName = properties.displayName"
+            First       = 1000
+            ErrorAction = 'Stop'
+        }
+        if ($sSkipToken) { $sParams['SkipToken'] = $sSkipToken }
+        
+        $sResults = Search-AzGraph @sParams
+        $sPage    = @(if ($sResults.PSObject.Properties.Name -contains 'Data') { $sResults.Data } else { $sResults })
+        $setRows += $sPage
+        
+        $sSkipToken = if ($sResults.PSObject.Properties.Name -contains 'SkipToken') { $sResults.SkipToken } else { $null }
+    } while ($sSkipToken)
     
     foreach ($set in $setRows) {
         $setId = $set.name.ToString().ToLower()
