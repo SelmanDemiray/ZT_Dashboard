@@ -162,15 +162,14 @@
   background: rgba(255, 255, 255, 0.6);
   border: 1px solid rgba(255, 255, 255, 0.25);
   border-radius: 1rem;
-  transition: transform 0.25s cubic-bezier(0.22, 1, 0.36, 1),
-              box-shadow 0.25s ease;
+  transition: all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
   overflow: hidden;
 }
 
 .glass-card:hover {
-  transform: translateY(-3px) scale(1.005);
-  box-shadow: 0 12px 40px -8px rgba(0, 0, 0, 0.12),
-              0 0 20px 2px rgba(56, 189, 248, 0.1);
+  transform: translateY(-4px) scale(1.01);
+  box-shadow: 0 16px 40px -8px rgba(0, 0, 0, 0.15),
+              0 0 24px 4px rgba(56, 189, 248, 0.15);
 }
 
 .dark .glass-card {
@@ -179,8 +178,8 @@
 }
 
 .dark .glass-card:hover {
-  box-shadow: 0 12px 40px -8px rgba(0, 0, 0, 0.5),
-              0 0 24px 4px rgba(56, 189, 248, 0.15);
+  box-shadow: 0 16px 40px -8px rgba(0, 0, 0, 0.6),
+              0 0 32px 6px rgba(56, 189, 248, 0.2);
 }
 
 /* Gradient border overlay */
@@ -252,14 +251,43 @@
 .expand-panel {
   display: grid;
   grid-template-rows: 0fr;
-  transition: grid-template-rows 0.35s cubic-bezier(0.22, 1, 0.36, 1);
+  transition: grid-template-rows 0.4s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.3s ease;
   overflow: hidden;
+  opacity: 0.8;
 }
 .expand-panel[data-open="true"] {
   grid-template-rows: 1fr;
+  opacity: 1;
 }
 .expand-panel > div {
   min-height: 0;
+}
+
+/* Base custom scrollbars */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(150, 150, 150, 0.3);
+  border-radius: 10px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(150, 150, 150, 0.5);
+}
+.dark ::-webkit-scrollbar-thumb {
+  background: rgba(200, 200, 200, 0.2);
+}
+.dark ::-webkit-scrollbar-thumb:hover {
+  background: rgba(200, 200, 200, 0.4);
+}
+
+::selection {
+  background: rgba(6, 182, 212, 0.3);
+  color: inherit;
 }
 
 /* Severity color utilities */
@@ -272,8 +300,38 @@
   * {
     @apply border-border;
   }
+  html {
+    @apply scroll-smooth;
+  }
   body {
-    @apply bg-background text-foreground;
+    @apply bg-background text-foreground font-sans antialiased text-balance;
+  }
+}
+
+/* Dashboard Card Staggering */
+.dashboard-grid-stagger > * {
+  animation: slide-up-fade 0.7s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+.dashboard-grid-stagger > *:nth-child(1) { animation-delay: 50ms; }
+.dashboard-grid-stagger > *:nth-child(2) { animation-delay: 150ms; }
+.dashboard-grid-stagger > *:nth-child(3) { animation-delay: 250ms; }
+.dashboard-grid-stagger > *:nth-child(4) { animation-delay: 350ms; }
+.dashboard-grid-stagger > *:nth-child(5) { animation-delay: 450ms; }
+.dashboard-grid-stagger > *:nth-child(n+6) { animation-delay: 550ms; }
+
+.dashboard-stagger-single {
+  animation: slide-up-fade 0.7s cubic-bezier(0.16, 1, 0.3, 1) both;
+  animation-delay: 50ms;
+}
+
+@keyframes slide-up-fade {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
   }
 }
 
@@ -284,4 +342,50 @@
 
 [data-sonner-toast] [data-icon] {
   margin-top: 2px !important;
+}
+
+/* Print optimizations */
+@media print {
+  body {
+    background-color: white !important;
+    color: black !important;
+  }
+  
+  header, footer, .mode-toggle-btn {
+    display: none !important;
+  }
+  
+  .glass-card {
+    background: white !important;
+    border: 1px solid #e5e7eb !important;
+    box-shadow: none !important;
+    page-break-inside: avoid;
+  }
+  
+  /* Ensure backgrounds render when printing */
+  * {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+  
+  /* Hide shadows, gradients, and scanlines for clean print */
+  .scan-line::after,
+  .shimmer,
+  .stat-glow {
+    display: none !important;
+    animation: none !important;
+    text-shadow: none !important;
+  }
+}
+
+/* Accessibility: Respect user motion preferences */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  ::before,
+  ::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }

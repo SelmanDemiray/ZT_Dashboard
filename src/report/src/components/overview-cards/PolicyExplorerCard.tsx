@@ -3,6 +3,7 @@ import { BookOpen, Search, ChevronDown, ChevronUp, AlertTriangle, CheckCircle2, 
 import type { PolicyCompliance, PolicyInitiative, PolicyResource, TenantSubscription, RunSnapshot } from '@/types/assessment';
 import { displaySubName } from '@/lib/format-sub-name';
 import { useShowMore } from '@/hooks/useShowMore';
+import { FilterDropdown } from '@/components/ui/FilterDropdown';
 
 interface Props {
     subscriptions: TenantSubscription[];
@@ -20,7 +21,7 @@ export function PolicyExplorerCard({ subscriptions, subDataMap, defaultSubId }: 
     const [rgFilter, setRgFilter] = useState('');
 
     const data: PolicyCompliance | null = subDataMap[subId]?.latestSnapshot?.policyCompliance ?? null;
-    const initiatives = data?.initiatives ?? [];
+    const initiatives = useMemo(() => data?.initiatives ?? [], [data?.initiatives]);
 
     /* Extract all unique resource groups */
     const resourceGroups = useMemo(() => {
@@ -89,7 +90,7 @@ export function PolicyExplorerCard({ subscriptions, subDataMap, defaultSubId }: 
     }
 
     return (
-        <div className="glass-card gradient-border scan-line overflow-hidden flex flex-col h-full">
+        <div className="glass-card gradient-border scan-line overflow-hidden flex flex-col h-[600px]">
             {/* Header */}
             <div className="p-4 sm:p-5 border-b border-border/50">
                 <div className="flex flex-wrap items-center justify-between gap-3">
@@ -98,25 +99,21 @@ export function PolicyExplorerCard({ subscriptions, subDataMap, defaultSubId }: 
                         <h3 className="text-sm font-semibold tracking-tight">Policy Explorer</h3>
                     </div>
                     <div className="flex flex-wrap items-center gap-2">
-                        <select
+                        <FilterDropdown
                             value={subId}
-                            onChange={e => setSubId(e.target.value)}
-                            className="h-7 rounded-md border border-input bg-background px-2 text-xs ring-offset-background focus:outline-none focus:ring-1 focus:ring-ring"
-                        >
-                            {subscriptions.map(s => (
-                                <option key={s.id} value={s.id}>{displaySubName(s)}</option>
-                            ))}
-                        </select>
-                        <select
+                            onValueChange={v => setSubId(v)}
+                            options={subscriptions.map(s => ({ value: s.id, label: displaySubName(s) }))}
+                            className="w-[140px]"
+                        />
+                        <FilterDropdown
                             value={rgFilter}
-                            onChange={e => setRgFilter(e.target.value)}
-                            className="h-7 rounded-md border border-input bg-background px-2 text-xs ring-offset-background focus:outline-none focus:ring-1 focus:ring-ring"
-                        >
-                            <option value="">All RGs</option>
-                            {resourceGroups.map(rg => (
-                                <option key={rg} value={rg}>{rg}</option>
-                            ))}
-                        </select>
+                            onValueChange={v => setRgFilter(v)}
+                            options={[
+                                { value: '', label: 'All RGs' },
+                                ...resourceGroups.map(rg => ({ value: rg, label: rg }))
+                            ]}
+                            className="w-[130px]"
+                        />
                     </div>
                 </div>
 

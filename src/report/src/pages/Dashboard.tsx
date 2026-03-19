@@ -1,3 +1,4 @@
+import React from "react";
 import { MonitorSmartphone, Users, User, UserCog, Luggage, Monitor, Layers3, Building2, ShieldCheck, CircleCheckBig, Briefcase } from "lucide-react";
 
 import {
@@ -5,27 +6,13 @@ import {
     BarChart,
     Cell,
     LabelList,
-    // Area,
-    // AreaChart,
-    // Bar,
-    // BarChart,
-    // CartesianGrid,
-    // Label,
-    // LabelList,
-    // Line,
-    // LineChart,
     Pie,
     PieChart,
     PolarAngleAxis,
     RadialBar,
     RadialBarChart,
-
     XAxis,
     YAxis,
-    // Rectangle,
-    // ReferenceLine,
-    // XAxis,
-    // YAxis,
 } from "recharts"
 
 import {
@@ -41,8 +28,6 @@ import {
     ChartContainer,
     ChartTooltip,
     ChartTooltipContent,
-    // ChartTooltip,
-    // ChartTooltipContent,
 } from "@/components/ui/chart"
 import {
     Tooltip,
@@ -64,6 +49,21 @@ import { OverviewCards } from "@/components/overview-cards";
 export default function Dashboard() {
     const { reportData } = useGlobalFilters();
 
+    const tenantMetrics = React.useMemo(() => [
+        { label: 'Users', value: reportData.TenantInfo?.TenantOverview?.UserCount, icon: User, color: '#3b82f6', bg: 'from-blue-500/15 to-blue-500/5', ring: '#3b82f625', desc: metricDescriptions.users },
+        { label: 'Guests', value: reportData.TenantInfo?.TenantOverview?.GuestCount, icon: Luggage, color: '#8b5cf6', bg: 'from-violet-500/15 to-violet-500/5', ring: '#8b5cf625', desc: metricDescriptions.guests },
+        { label: 'Groups', value: reportData.TenantInfo?.TenantOverview?.GroupCount, icon: Users, color: '#a855f7', bg: 'from-purple-500/15 to-purple-500/5', ring: '#a855f725', desc: metricDescriptions.groups },
+        { label: 'Apps', value: reportData.TenantInfo?.TenantOverview?.ApplicationCount, icon: Layers3, color: '#ec4899', bg: 'from-pink-500/15 to-pink-500/5', ring: '#ec489925', desc: metricDescriptions.apps },
+        { label: 'Devices', value: reportData.TenantInfo?.TenantOverview?.DeviceCount, icon: MonitorSmartphone, color: '#f97316', bg: 'from-orange-500/15 to-orange-500/5', ring: '#f9731625', desc: metricDescriptions.devices },
+        { label: 'Managed', value: reportData.TenantInfo?.TenantOverview?.ManagedDeviceCount, icon: Monitor, color: '#22c55e', bg: 'from-emerald-500/15 to-emerald-500/5', ring: '#22c55e25', desc: metricDescriptions.managed },
+    ], [reportData.TenantInfo?.TenantOverview]);
+
+    const tenantDetails = React.useMemo(() => [
+        { label: 'Name', value: reportData.TenantName || 'Not Available', mono: false },
+        { label: 'Tenant ID', value: reportData.TenantId || 'Not Available', mono: true },
+        { label: 'Primary Domain', value: reportData.Domain || 'Not Available', mono: false },
+    ], [reportData.TenantName, reportData.TenantId, reportData.Domain]);
+
     return (
         <TooltipProvider delayDuration={200}>
             {/* ── Hero: Tenant / Metrics / Assessment ── */}
@@ -82,11 +82,7 @@ export default function Dashboard() {
                             </div>
                         </div>
                         <div className="space-y-3">
-                            {[
-                                { label: 'Name', value: reportData.TenantName || 'Not Available', mono: false },
-                                { label: 'Tenant ID', value: reportData.TenantId || 'Not Available', mono: true },
-                                { label: 'Primary Domain', value: reportData.Domain || 'Not Available', mono: false },
-                            ].map(({ label, value, mono }) => (
+                            {tenantDetails.map(({ label, value, mono }) => (
                                 <div key={label} className="flex items-start gap-3">
                                     <div className="w-28 shrink-0">
                                         <span className="text-[11px] text-muted-foreground font-medium">{label}</span>
@@ -101,17 +97,10 @@ export default function Dashboard() {
 
                     {/* ── Tenant Metrics Grid ── */}
                     <div className="grid gap-3 grid-cols-2 grid-rows-3">
-                        {[
-                            { label: 'Users', value: reportData.TenantInfo?.TenantOverview?.UserCount, icon: User, color: '#3b82f6', bg: 'from-blue-500/15 to-blue-500/5', ring: '#3b82f625', desc: metricDescriptions.users },
-                            { label: 'Guests', value: reportData.TenantInfo?.TenantOverview?.GuestCount, icon: Luggage, color: '#8b5cf6', bg: 'from-violet-500/15 to-violet-500/5', ring: '#8b5cf625', desc: metricDescriptions.guests },
-                            { label: 'Groups', value: reportData.TenantInfo?.TenantOverview?.GroupCount, icon: Users, color: '#a855f7', bg: 'from-purple-500/15 to-purple-500/5', ring: '#a855f725', desc: metricDescriptions.groups },
-                            { label: 'Apps', value: reportData.TenantInfo?.TenantOverview?.ApplicationCount, icon: Layers3, color: '#ec4899', bg: 'from-pink-500/15 to-pink-500/5', ring: '#ec489925', desc: metricDescriptions.apps },
-                            { label: 'Devices', value: reportData.TenantInfo?.TenantOverview?.DeviceCount, icon: MonitorSmartphone, color: '#f97316', bg: 'from-orange-500/15 to-orange-500/5', ring: '#f9731625', desc: metricDescriptions.devices },
-                            { label: 'Managed', value: reportData.TenantInfo?.TenantOverview?.ManagedDeviceCount, icon: Monitor, color: '#22c55e', bg: 'from-emerald-500/15 to-emerald-500/5', ring: '#22c55e25', desc: metricDescriptions.managed },
-                        ].map(({ label, value, icon: Icon, color, bg, ring, desc }) => (
+                        {tenantMetrics.map(({ label, value, icon: Icon, color, bg, ring, desc }) => (
                             <Tooltip key={label}>
                                 <TooltipTrigger asChild>
-                                    <div className={`glass-card flex items-center gap-3 px-4 py-3 rounded-xl bg-gradient-to-br ${bg} border border-border/60 hover:scale-[1.02] hover:shadow-lg transition-all duration-200 cursor-default`}
+                                    <div tabIndex={0} aria-label={`${label}: ${value}`} className={`glass-card flex items-center gap-3 px-4 py-3 rounded-xl bg-gradient-to-br ${bg} border border-border/60 hover:scale-[1.02] hover:shadow-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-primary transition-all duration-200 cursor-default`}
                                         style={{ outline: `1px solid ${ring}` }}>
                                         <div className="p-1.5 rounded-lg shrink-0" style={{ background: `${color}18` }}>
                                             <Icon className="size-4" style={{ color }} />
@@ -232,22 +221,15 @@ export default function Dashboard() {
                                     </CardTitle>
                                 </CardHeader>
                                 <CardContent>
-                                    <ChartContainer
-                                        config={{
-                                            steps: {
-                                                label: "Steps",
-                                                color: "hsl(var(--chart-1))",
-                                            },
-                                        }}
-                                    >
+                                    <div className="h-[250px] w-full">
                                         {reportData.TenantInfo?.OverviewAuthMethodsPrivilegedUsers?.nodes ? (
                                             <AuthMethodSankey data={reportData.TenantInfo.OverviewAuthMethodsPrivilegedUsers.nodes} />
                                         ) : (
-                                            <div className="flex items-center justify-center h-32 text-muted-foreground">
+                                            <div className="flex items-center justify-center h-full text-muted-foreground">
                                                 No data available
                                             </div>
                                         )}
-                                    </ChartContainer>
+                                    </div>
                                 </CardContent>
                                 <CardFooter className="flex-col items-start gap-1">
                                     <CardDescription>
@@ -268,22 +250,15 @@ export default function Dashboard() {
                                     </CardTitle>
                                 </CardHeader>
                                 <CardContent>
-                                    <ChartContainer
-                                        config={{
-                                            steps: {
-                                                label: "Steps",
-                                                color: "hsl(var(--chart-1))",
-                                            },
-                                        }}
-                                    >
+                                    <div className="h-[250px] w-full">
                                         {reportData.TenantInfo?.OverviewAuthMethodsAllUsers?.nodes ? (
                                             <AuthMethodSankey data={reportData.TenantInfo.OverviewAuthMethodsAllUsers.nodes} />
                                         ) : (
-                                            <div className="flex items-center justify-center h-32 text-muted-foreground">
+                                            <div className="flex items-center justify-center h-full text-muted-foreground">
                                                 No data available
                                             </div>
                                         )}
-                                    </ChartContainer>
+                                    </div>
                                 </CardContent>
                                 <CardFooter className="flex-col items-start gap-1">
                                     <CardDescription>
@@ -292,255 +267,11 @@ export default function Dashboard() {
                                 </CardFooter>
                             </Card>
                         ) : null}
-                        {/* {<Card
-                            className="lg:max-w-md" x-chunk="charts-01-chunk-0"
-                        >
-                            <CardHeader className="space-y-0 pb-2">
-                                <CardDescription>Defender for Office 365</CardDescription>
-                                <CardTitle className="text-4xl tabular-nums">
-                                    1,284{" "}
-                                    <span className="font-sans text-sm font-normal tracking-normal text-muted-foreground">
-                                        phishing blocks
-                                    </span>
-                                </CardTitle>
-                            </CardHeader>
-                            <CardContent>
-                                <ChartContainer
-                                    config={{
-                                        steps: {
-                                            label: "Blocks",
-                                            color: "hsl(var(--chart-1))",
-                                        },
-                                    }}
-                                >
-                                    <BarChart
-                                        accessibilityLayer
-                                        margin={{
-                                            left: -4,
-                                            right: -4,
-                                        }}
-                                        data={[
-                                            {
-                                                date: "2024-01-01",
-                                                steps: 2000,
-                                            },
-                                            {
-                                                date: "2024-01-02",
-                                                steps: 2100,
-                                            },
-                                            {
-                                                date: "2024-01-03",
-                                                steps: 2200,
-                                            },
-                                            {
-                                                date: "2024-01-04",
-                                                steps: 1300,
-                                            },
-                                            {
-                                                date: "2024-01-05",
-                                                steps: 1400,
-                                            },
-                                            {
-                                                date: "2024-01-06",
-                                                steps: 2500,
-                                            },
-                                            {
-                                                date: "2024-01-07",
-                                                steps: 1600,
-                                            },
-                                        ]}
-                                    >
-                                        <Bar
-                                            dataKey="steps"
-                                            fill="var(--color-steps)"
-                                            radius={5}
-                                            fillOpacity={0.6}
-                                            activeBar={<Rectangle fillOpacity={0.8} />}
-                                        />
-                                        <XAxis
-                                            dataKey="date"
-                                            tickLine={false}
-                                            axisLine={false}
-                                            tickMargin={4}
-                                            tickFormatter={(value) => {
-                                                return new Date(value).toLocaleDateString("en-US", {
-                                                    weekday: "short",
-                                                })
-                                            }}
-                                        />
-                                        <ChartTooltip
-                                            defaultIndex={2}
-                                            content={
-                                                <ChartTooltipContent
-                                                    hideIndicator
-                                                    labelFormatter={(value) => {
-                                                        return new Date(value).toLocaleDateString("en-US", {
-                                                            day: "numeric",
-                                                            month: "long",
-                                                            year: "numeric",
-                                                        })
-                                                    }}
-                                                />
-                                            }
-                                            cursor={false}
-                                        />
-                                        <ReferenceLine
-                                            y={1200}
-                                            stroke="hsl(var(--muted-foreground))"
-                                            strokeDasharray="3 3"
-                                            strokeWidth={1}
-                                        >
-                                            <Label
-                                                position="insideBottomLeft"
-                                                value="Average Blocks"
-                                                offset={10}
-                                                fill="hsl(var(--foreground))"
-                                            />
-                                            <Label
-                                                position="insideTopLeft"
-                                                value="1,284"
-                                                className="text-lg"
-                                                fill="hsl(var(--foreground))"
-                                                offset={10}
-                                                startOffset={100}
-                                            />
-                                        </ReferenceLine>
-                                    </BarChart>
-                                </ChartContainer>
-                            </CardContent>
-                            <CardFooter className="flex-col items-start gap-1">
-                                <CardDescription>
-                                    Over the past 7 days, Defender has blocked {" "}
-                                    <span className="font-medium text-foreground">13,305</span> phishing attempts.
-                                </CardDescription>
-                            </CardFooter>
-                        </Card>} */}
-                        {/* <Card
-                        className="flex flex-col lg:max-w-md" x-chunk="charts-01-chunk-1"
-                    >
-                        <CardHeader className="flex flex-row items-center gap-4 space-y-0 pb-2 [&>div]:flex-1">
-                            <div>
-                                <CardDescription>Purview</CardDescription>
-                                <CardTitle className="flex items-baseline gap-1 text-4xl tabular-nums">
-                                    62
-                                    <span className="text-sm font-normal tracking-normal text-muted-foreground">
-                                        labels
-                                    </span>
-                                </CardTitle>
-                            </div>
-                            <div>
-                                <CardDescription>Defender IoT</CardDescription>
-                                <CardTitle className="flex items-baseline gap-1 text-4xl tabular-nums">
-                                    35
-                                    <span className="text-sm font-normal tracking-normal text-muted-foreground">
-                                        blocks
-                                    </span>
-                                </CardTitle>
-                            </div>
-                        </CardHeader>
-                        <CardContent className="flex flex-1 items-center">
-                            <ChartContainer
-                                config={{
-                                    resting: {
-                                        label: "Resting",
-                                        color: "hsl(var(--chart-1))",
-                                    },
-                                }}
-                                className="w-full"
-                            >
-                                <LineChart
-                                    accessibilityLayer
-                                    margin={{
-                                        left: 14,
-                                        right: 14,
-                                        top: 10,
-                                    }}
-                                    data={[
-                                        {
-                                            date: "2024-01-01",
-                                            resting: 62,
-                                        },
-                                        {
-                                            date: "2024-01-02",
-                                            resting: 72,
-                                        },
-                                        {
-                                            date: "2024-01-03",
-                                            resting: 35,
-                                        },
-                                        {
-                                            date: "2024-01-04",
-                                            resting: 62,
-                                        },
-                                        {
-                                            date: "2024-01-05",
-                                            resting: 52,
-                                        },
-                                        {
-                                            date: "2024-01-06",
-                                            resting: 62,
-                                        },
-                                        {
-                                            date: "2024-01-07",
-                                            resting: 70,
-                                        },
-                                    ]}
-                                >
-                                    <CartesianGrid
-                                        strokeDasharray="4 4"
-                                        vertical={false}
-                                        stroke="hsl(var(--muted-foreground))"
-                                        strokeOpacity={0.5}
-                                    />
-                                    <YAxis hide domain={["dataMin - 10", "dataMax + 10"]} />
-                                    <XAxis
-                                        dataKey="date"
-                                        tickLine={false}
-                                        axisLine={false}
-                                        tickMargin={8}
-                                        tickFormatter={(value) => {
-                                            return new Date(value).toLocaleDateString("en-US", {
-                                                weekday: "short",
-                                            })
-                                        }}
-                                    />
-                                    <Line
-                                        dataKey="resting"
-                                        type="natural"
-                                        fill="var(--color-resting)"
-                                        stroke="var(--color-resting)"
-                                        strokeWidth={2}
-                                        dot={false}
-                                        activeDot={{
-                                            fill: "var(--color-resting)",
-                                            stroke: "var(--color-resting)",
-                                            r: 4,
-                                        }}
-                                    />
-                                    <ChartTooltip
-                                        content={
-                                            <ChartTooltipContent
-                                                indicator="line"
-                                                labelFormatter={(value) => {
-                                                    return new Date(value).toLocaleDateString("en-US", {
-                                                        day: "numeric",
-                                                        month: "long",
-                                                        year: "numeric",
-                                                    })
-                                                }}
-                                            />
-                                        }
-                                        cursor={false}
-                                    />
-                                </LineChart>
-                            </ChartContainer>
-                        </CardContent>
-                    </Card> */}
                     </div>
                     <div className="grid w-full gap-6 lg:col-span-1">
                         {reportData.TenantInfo?.OverviewAuthMethodsAllUsers?.nodes ? (
                             <Card
-                                className="lmax-w-xs" x-chunk="charts-01-chunk-0"
+                                className="w-full" x-chunk="charts-01-chunk-0"
                             >
                                 <CardHeader className="space-y-0 pb-2 flex-row">
                                     <User className="pr-2 size-8" />
@@ -549,22 +280,15 @@ export default function Dashboard() {
                                     </CardTitle>
                                 </CardHeader>
                                 <CardContent>
-                                    <ChartContainer
-                                        config={{
-                                            steps: {
-                                                label: "Steps",
-                                                color: "hsl(var(--chart-1))",
-                                            },
-                                        }}
-                                    >
+                                    <div className="h-[250px] w-full">
                                         {reportData.TenantInfo?.OverviewCaMfaAllUsers?.nodes ? (
                                             <CaSankey data={reportData.TenantInfo.OverviewCaMfaAllUsers.nodes} />
                                         ) : (
-                                            <div className="flex items-center justify-center h-32 text-muted-foreground">
+                                            <div className="flex items-center justify-center h-full text-muted-foreground">
                                                 No data available
                                             </div>
                                         )}
-                                    </ChartContainer>
+                                    </div>
                                 </CardContent>
                                 <CardFooter className="flex-col items-start gap-1">
                                     <CardDescription>
@@ -576,7 +300,7 @@ export default function Dashboard() {
 
                         {reportData.TenantInfo?.OverviewAuthMethodsPrivilegedUsers?.nodes ? (
                             <Card
-                                className="lmax-w-xs" x-chunk="charts-01-chunk-0"
+                                className="w-full" x-chunk="charts-01-chunk-0"
                             >
                                 <CardHeader className="space-y-0 pb-2 flex-row">
                                     <MonitorSmartphone className="pr-2 size-8" />
@@ -585,22 +309,15 @@ export default function Dashboard() {
                                     </CardTitle>
                                 </CardHeader>
                                 <CardContent>
-                                    <ChartContainer
-                                        config={{
-                                            steps: {
-                                                label: "Steps",
-                                                color: "hsl(var(--chart-1))",
-                                            },
-                                        }}
-                                    >
+                                    <div className="h-[250px] w-full">
                                         {reportData.TenantInfo?.OverviewCaDevicesAllUsers?.nodes ? (
                                             <CaDeviceSankey data={reportData.TenantInfo.OverviewCaDevicesAllUsers.nodes} />
                                         ) : (
-                                            <div className="flex items-center justify-center h-32 text-muted-foreground">
+                                            <div className="flex items-center justify-center h-full text-muted-foreground">
                                                 No data available
                                             </div>
                                         )}
-                                    </ChartContainer>
+                                    </div>
                                 </CardContent>
                                 <CardFooter className="flex-col items-start gap-1">
                                     <CardDescription>
@@ -609,215 +326,13 @@ export default function Dashboard() {
                                 </CardFooter>
                             </Card>
                         ) : null}
-                        {/* {<Card
-                            className="max-w-xs" x-chunk="charts-01-chunk-2"
-                        >
-                            <CardHeader>
-                                <CardTitle>Passwordless Progress</CardTitle>
-                                <CardDescription>
-                                    You average more passwordless sign-ins this month compared to the last.
-                                </CardDescription>
-                            </CardHeader>
-                            <CardContent className="grid gap-4">
-                                <div className="grid auto-rows-min gap-2">
-                                    <div className="flex items-baseline gap-1 text-2xl font-bold tabular-nums leading-none">
-                                        453
-                                        <span className="text-sm font-normal text-muted-foreground">
-                                            sign-ins/day
-                                        </span>
-                                    </div>
-                                    <ChartContainer
-                                        config={{
-                                            steps: {
-                                                label: "Steps",
-                                                color: "hsl(var(--chart-1))",
-                                            },
-                                        }}
-                                        className="aspect-auto h-[32px] w-full"
-                                    >
-                                        <BarChart
-                                            accessibilityLayer
-                                            layout="vertical"
-                                            margin={{
-                                                left: 0,
-                                                top: 0,
-                                                right: 0,
-                                                bottom: 0,
-                                            }}
-                                            data={[
-                                                {
-                                                    date: "Jul 2024",
-                                                    steps: 12435,
-                                                },
-                                            ]}
-                                        >
-                                            <Bar
-                                                dataKey="steps"
-                                                fill="var(--color-steps)"
-                                                radius={4}
-                                                barSize={32}
-                                            >
-                                                <LabelList
-                                                    position="insideLeft"
-                                                    dataKey="date"
-                                                    offset={8}
-                                                    fontSize={12}
-                                                    fill="white"
-                                                />
-                                            </Bar>
-                                            <YAxis dataKey="date" type="category" tickCount={1} hide />
-                                            <XAxis dataKey="steps" type="number" hide />
-                                        </BarChart>
-                                    </ChartContainer>
-                                </div>
-                                <div className="grid auto-rows-min gap-2">
-                                    <div className="flex items-baseline gap-1 text-2xl font-bold tabular-nums leading-none">
-                                        314
-                                        <span className="text-sm font-normal text-muted-foreground">
-                                            sign-ins/day
-                                        </span>
-                                    </div>
-                                    <ChartContainer
-                                        config={{
-                                            steps: {
-                                                label: "Steps",
-                                                color: "hsl(var(--muted))",
-                                            },
-                                        }}
-                                        className="aspect-auto h-[32px] w-full"
-                                    >
-                                        <BarChart
-                                            accessibilityLayer
-                                            layout="vertical"
-                                            margin={{
-                                                left: 0,
-                                                top: 0,
-                                                right: 0,
-                                                bottom: 0,
-                                            }}
-                                            data={[
-                                                {
-                                                    date: "Jun 2024",
-                                                    steps: 10103,
-                                                },
-                                            ]}
-                                        >
-                                            <Bar
-                                                dataKey="steps"
-                                                fill="var(--color-steps)"
-                                                radius={4}
-                                                barSize={32}
-                                            >
-                                                <LabelList
-                                                    position="insideLeft"
-                                                    dataKey="date"
-                                                    offset={8}
-                                                    fontSize={12}
-                                                    fill="hsl(var(--muted-foreground))"
-                                                />
-                                            </Bar>
-                                            <YAxis dataKey="date" type="category" tickCount={1} hide />
-                                            <XAxis dataKey="steps" type="number" hide />
-                                        </BarChart>
-                                    </ChartContainer>
-                                </div>
-                            </CardContent>
-                        </Card>} */}
-                        {/* {<Card
-                            className="max-w-xs" x-chunk="charts-01-chunk-3"
-                        >
-                            <CardHeader className="p-4 pb-0">
-                                <CardTitle>Defender Actions</CardTitle>
-                                <CardDescription>
-                                    Over the last 7 days, your workbook actions have been triggered over 130 times
-                                    per day.
-                                </CardDescription>
-                            </CardHeader>
-                            <CardContent className="flex flex-row items-baseline gap-4 p-4 pt-0">
-                                <div className="flex items-baseline gap-1 text-3xl font-bold tabular-nums leading-none">
-                                    130
-                                    <span className="text-sm font-normal text-muted-foreground">
-                                        triggers/day
-                                    </span>
-                                </div>
-                                <ChartContainer
-                                    config={{
-                                        steps: {
-                                            label: "Steps",
-                                            color: "hsl(var(--chart-1))",
-                                        },
-                                    }}
-                                    className="ml-auto w-[72px]"
-                                >
-                                    <BarChart
-                                        accessibilityLayer
-                                        margin={{
-                                            left: 0,
-                                            right: 0,
-                                            top: 0,
-                                            bottom: 0,
-                                        }}
-                                        data={[
-                                            {
-                                                date: "2024-01-01",
-                                                steps: 2000,
-                                            },
-                                            {
-                                                date: "2024-01-02",
-                                                steps: 2100,
-                                            },
-                                            {
-                                                date: "2024-01-03",
-                                                steps: 2200,
-                                            },
-                                            {
-                                                date: "2024-01-04",
-                                                steps: 1300,
-                                            },
-                                            {
-                                                date: "2024-01-05",
-                                                steps: 1400,
-                                            },
-                                            {
-                                                date: "2024-01-06",
-                                                steps: 2500,
-                                            },
-                                            {
-                                                date: "2024-01-07",
-                                                steps: 1600,
-                                            },
-                                        ]}
-                                    >
-                                        <Bar
-                                            dataKey="steps"
-                                            fill="var(--color-steps)"
-                                            radius={2}
-                                            fillOpacity={0.2}
-                                            activeIndex={6}
-                                            activeBar={<Rectangle fillOpacity={0.8} />}
-                                        />
-                                        <XAxis
-                                            dataKey="date"
-                                            tickLine={false}
-                                            axisLine={false}
-                                            tickMargin={4}
-                                            hide
-                                        />
-                                    </BarChart>
-                                </ChartContainer>
-                            </CardContent>
-                        </Card>} */}
                     </div>
                 </div>
             </div >
 
             {/* Devices Section */}
-            < div className="flex max-w-7xl flex-col gap-6 mt-6" >
-                {/* <PageHeader>
-                    <PageHeaderHeading>Devices</PageHeaderHeading>
-                </PageHeader> */}
-
-                < div className="grid gap-6 grid-cols-1 lg:grid-cols-3" >
+            <div className="flex max-w-7xl flex-col gap-6 mt-6">
+                <div className="grid gap-6 grid-cols-1 lg:grid-cols-3">
                     {/* Device summary chart */}
                     {
                         reportData.TenantInfo?.DeviceOverview?.ManagedDevices ? (
@@ -1295,24 +810,6 @@ export default function Dashboard() {
 
                 </div >
             </div >
-        </TooltipProvider >
-    )
+        </TooltipProvider>
+    );
 }
-
-// const MyCustomComponent = (props: any) => {
-//     return <path fill={props.payload.color} fill-opacity="0.1" stroke={props.payload.stroke} stroke-width="2" x={props.x} y={props.y} width="10"
-//         height={props.height} radius="0" className="recharts-rectangle recharts-sankey-node"
-//         d={`M ${props.x},${props.y} h ${props.width} v ${props.height} h -${props.width} Z`} />
-// }
-// const MyCustomLinkComponent = (props: any) => {
-//     console.log('props', props)
-//     return <path
-//         d={`
-//         M${props.sourceX},${props.sourceY}
-//         C${props.sourceControlX},${props.sourceY} ${props.targetControlX},${props.targetY} ${props.targetX},${props.targetY}
-//       `}
-//         stroke={props.payload.color}
-//         strokeWidth={props.linkWidth}
-//         {...props}
-//     />
-// }

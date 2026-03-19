@@ -1,4 +1,4 @@
-import { createContext, useEffect, useState } from "react"
+import { createContext, useEffect, useState, useMemo } from "react"
 
 type ThemeProviderProps = {
     children: React.ReactNode
@@ -16,6 +16,7 @@ const initialState = {
     setTheme: () => null,
 }
 
+// eslint-disable-next-line react-refresh/only-export-components
 export const ThemeProviderContext = createContext<ThemeProviderState>(initialState)
 
 export function ThemeProvider({
@@ -64,14 +65,16 @@ export function ThemeProvider({
         return () => mediaQuery.removeEventListener("change", handleChange)
     }, [theme])
 
+    const contextValue = useMemo(() => ({
+        theme,
+        setTheme: (newTheme: string) => {
+            localStorage.setItem(storageKey, newTheme)
+            setTheme(newTheme)
+        },
+    }), [theme, storageKey])
+
     return (
-        <ThemeProviderContext.Provider {...props} value={{
-            theme,
-            setTheme: (theme: string) => {
-                localStorage.setItem(storageKey, theme)
-                setTheme(theme)
-            },
-        }}>
+        <ThemeProviderContext.Provider {...props} value={contextValue}>
             {children}
         </ThemeProviderContext.Provider>
     )

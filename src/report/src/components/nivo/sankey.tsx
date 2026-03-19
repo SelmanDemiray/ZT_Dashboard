@@ -13,6 +13,7 @@ type SankeyNode = {
 
 type SankeyData = {
     nodes: SankeyNode[];
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     links: any[]; // replace with the actual type of links
 };
 

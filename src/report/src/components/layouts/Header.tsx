@@ -1,4 +1,4 @@
-import { useState } from "react";
+import React, { useState } from "react";
 import { NavLink, useLocation } from "react-router-dom";
 import { cn } from "@/lib/utils";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
@@ -21,8 +21,9 @@ import { ChevronDownIcon, ViewVerticalIcon } from "@radix-ui/react-icons";
 import { ScrollArea } from "@radix-ui/react-scroll-area";
 import { Logo } from "../logo";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
+import Balancer from "react-wrap-balancer";
 
-export function Header() {
+export const Header = React.memo(function Header() {
     const [open, setOpen] = useState(false)
     const location = useLocation();
     const { reportData } = useGlobalFilters();
@@ -30,10 +31,10 @@ export function Header() {
         <header className="supports-backdrop-blur:bg-background/60 sticky top-0 z-50 w-full border-b bg-background/90 backdrop-blur">
             <div className="container px-4 md:px-8 flex h-14 items-center">
                 <div className="mr-4 hidden md:flex">
-                    <NavLink to="/" className="mr-6 flex items-center space-x-2">
+                    <NavLink to="/" className="mr-6 flex items-center space-x-2" aria-label="Home page">
                         <Logo />
                     </NavLink>
-                    <nav className="flex items-center space-x-6 text-sm font-medium">
+                    <nav aria-label="Main navigation" className="flex items-center space-x-6 text-sm font-medium">
                         {mainMenu.map((menu, index) =>
                             menu.items !== undefined ? (
                                 <DropdownMenu key={index}>
@@ -159,14 +160,16 @@ export function Header() {
                 </Sheet>
                 <a href="/" className="mr-6 flex items-center space-x-2 md:hidden">
                     <Icons.logo className="h-6 w-6" />
-                    <span className="font-bold inline-block">{ztAppConfig.name}</span>
+                    <span className="font-bold inline-block text-center max-w-[150px]">
+                        <Balancer>{ztAppConfig.name}</Balancer>
+                    </span>
                 </a>
                 {/* right */}
                 <div className="flex flex-1 items-center justify-between space-x-2 md:justify-end">
                     <div className="w-full flex-1 md:w-auto md:flex-none">
                         {/* <CommandMenu /> */}
                     </div>
-                    <nav className="flex items-center space-x-2">
+                    <nav aria-label="Theme utility and GitHub link" className="flex items-center space-x-2">
                         <ModeToggle />
                         <a
                             href={ztAppConfig.github.url}
@@ -185,7 +188,7 @@ export function Header() {
                             </div>
                         </a>
                     </nav>
-                    <nav className="flex items-center space-x-2">
+                    <nav aria-label="Tenant details menu" className="flex items-center space-x-2">
                         <DropdownMenu>
                             <DropdownMenuTrigger asChild>
                                 <Button
@@ -246,4 +249,4 @@ export function Header() {
             </div>
         </header>
     )
-}
+})

@@ -1740,14 +1740,21 @@ foreach ($subId in $targetSubscriptionIds) {
     # initiatives are silently dropped in large environments.
     $policyQuery = @"
 PolicyResources
-| where type == 'microsoft.policyinsights/policystates'
+| where type =~ 'microsoft.policyinsights/policystates'
 | where subscriptionId == '$subId'
 | where properties.complianceState != ''
 | extend initiativeId    = tostring(properties.policySetDefinitionId),
-         initiativeName  = tostring(properties.policySetDefinitionName),
+         initiativeIdKey = tolower(tostring(properties.policySetDefinitionId)),
          complianceState = tostring(properties.complianceState),
          policyDefId     = tostring(properties.policyDefinitionId),
          policyAssignId  = tostring(properties.policyAssignmentId)
+| join kind=leftouter (
+    policyresources
+    | where type =~ 'microsoft.authorization/policysetdefinitions'
+    | extend initId = tolower(id)
+    | project initId, initDisplayName = tostring(properties.displayName)
+) on $left.initiativeIdKey == $right.initId
+| extend initiativeName  = iff(isnotempty(initDisplayName), initDisplayName, tostring(properties.policySetDefinitionName))
 | summarize compliantCount    = countif(complianceState == 'Compliant'),
             nonCompliantCount = countif(complianceState == 'NonCompliant'),
             exemptCount       = countif(complianceState == 'Exempt'),
@@ -1844,7 +1851,7 @@ PolicyResources
             # Paginate through all non-compliant resources -- no take cap.
         $resourceQuery = @"
 PolicyResources
-| where type == 'microsoft.policyinsights/policystates'
+| where type =~ 'microsoft.policyinsights/policystates'
 | where subscriptionId == '$subId'
 | where properties.complianceState == 'NonCompliant'
 | extend resourceId    = tostring(properties.resourceId),
@@ -1852,9 +1859,16 @@ PolicyResources
          resourceType  = tostring(properties.resourceType),
          resourceGroup = tostring(properties.resourceGroup),
          policyDefId   = tostring(properties.policyDefinitionId),
-         policyName    = tostring(properties.policyDefinitionName),
+         policyDefIdKey = tolower(tostring(properties.policyDefinitionId)),
          initiativeId  = tostring(properties.policySetDefinitionId),
          state         = tostring(properties.complianceState)
+| join kind=leftouter (
+    policyresources
+    | where type =~ 'microsoft.authorization/policydefinitions'
+    | extend polId = tolower(id)
+    | project polId, policyDisplayName = tostring(properties.displayName)
+) on $left.policyDefIdKey == $right.polId
+| extend policyName = iff(isnotempty(policyDisplayName), policyDisplayName, tostring(properties.policyDefinitionName))
 | project resourceId, resourceName, resourceType, resourceGroup,
           subscriptionId, state, policyDefId, policyName, initiativeId
 "@

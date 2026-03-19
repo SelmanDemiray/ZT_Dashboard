@@ -1,14 +1,17 @@
+import React, { useMemo } from "react";
 import { Icons } from "../icons";
 import { useGlobalFilters } from "@/contexts/GlobalFilterContext";
 // import { ztAppConfig } from "@/config/app";
 // import { ModeToggle } from "../mode-toggle";
 
-export function Footer() {
+export const Footer = React.memo(function Footer() {
     const { reportData } = useGlobalFilters();
-    // Format the assessment date
-    const formatDate = (dateString: string) => {
+    
+    // Format the assessment date, memoized to prevent recalculation
+    const assessmentDate = useMemo(() => {
+        if (!reportData.ExecutedAt) return 'Not Available';
         try {
-            return new Date(dateString).toLocaleDateString('en-US', {
+            return new Date(reportData.ExecutedAt).toLocaleDateString('en-US', {
                 year: 'numeric',
                 month: 'long',
                 day: 'numeric'
@@ -16,12 +19,10 @@ export function Footer() {
         } catch {
             return 'Invalid Date';
         }
-    };
-
-    const assessmentDate = reportData.ExecutedAt ? formatDate(reportData.ExecutedAt) : 'Not Available';
+    }, [reportData.ExecutedAt]);
 
     return (
-        <footer className="border-t bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
+        <footer role="contentinfo" className="border-t bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
             <div className="container mx-auto px-4 py-8">
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-8 items-start">
                     {/* Left Section - About */}
@@ -36,7 +37,7 @@ export function Footer() {
                     </div>
 
                     {/* Center Section - Links */}
-                    <div className="space-y-4">
+                    <nav aria-label="Resources" className="space-y-4">
                         <h4 className="font-semibold text-foreground">Resources</h4>
                         <div className="space-y-2">
                             <a
@@ -56,10 +57,10 @@ export function Footer() {
                                 Zero Trust Workshop
                             </a>
                         </div>
-                    </div>
+                    </nav>
 
                     {/* Right Section - Support */}
-                    <div className="space-y-4">
+                    <nav aria-label="Support links" className="space-y-4">
                         <h4 className="font-semibold text-foreground">Support</h4>
                         <div className="space-y-2">
                             <a
@@ -88,7 +89,7 @@ export function Footer() {
                                 <span>GitHub</span>
                             </a>
                         </div>
-                    </div>
+                    </nav>
                 </div>
 
                 {/* Bottom Section - Copyright and Legal */}
@@ -102,7 +103,7 @@ export function Footer() {
                         </p>
                     </div>
 
-                    <div className="flex items-center space-x-4 text-xs text-muted-foreground">
+                    <nav aria-label="Legal links" className="flex items-center space-x-4 text-xs text-muted-foreground">
                         <a
                             href="https://privacy.microsoft.com/privacystatement"
                             target="_blank"
@@ -120,9 +121,9 @@ export function Footer() {
                         >
                             Terms
                         </a>
-                        <span>•</span>
+                        <span aria-hidden="true">•</span>
                         <span>{assessmentDate}</span>
-                    </div>
+                    </nav>
 
                     {/* Theme Toggle (Hidden but available for future use) */}
                     <div className="hidden">
@@ -133,4 +134,4 @@ export function Footer() {
             </div>
         </footer>
     )
-}
+})

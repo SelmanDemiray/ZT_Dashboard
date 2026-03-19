@@ -18,7 +18,7 @@ const PILLAR_COLORS: Record<string, string> = {
 export function SecurityScoreGauge({ data }: Props) {
     const score = data?.overallScore ?? 0;
     const pillars = data?.pillars ?? [];
-    const checks = data?.checks ?? [];
+    const checks = useMemo(() => data?.checks ?? [], [data?.checks]);
 
     const totalPassed = useMemo(() => checks.filter(c => c.status === 'passed').length, [checks]);
     const totalFailed = useMemo(() => checks.filter(c => c.status === 'failed').length, [checks]);

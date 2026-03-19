@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-unused-vars */
 import { ColumnMeta } from "@tanstack/table-core";
 
 // Extend or augment the `.meta` interface

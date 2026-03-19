@@ -20,6 +20,7 @@ import {
     TooltipProvider,
     TooltipTrigger,
 } from '@/components/ui/tooltip';
+import { FilterDropdown } from '@/components/ui/FilterDropdown';
 
 interface SubDataEntry {
     sub: TenantSubscription;
@@ -115,19 +116,20 @@ export function ComplianceCard({ subscriptions, subDataMap, defaultSubId }: Prop
     if (!data) {
         return (
             <TooltipProvider>
-                <div className="glass-card gradient-border scan-line p-6 flex flex-col items-center justify-center min-h-[300px] gap-3">
-                    <ShieldCheck className="size-10 text-muted-foreground/40" />
+                <div className="glass-card gradient-border scan-line p-6 flex flex-col items-center justify-center min-h-[300px] gap-3 transition-all duration-300">
+                    <div className="relative">
+                        <div className="absolute inset-0 bg-muted/20 animate-ping rounded-full" />
+                        <ShieldCheck className="size-10 text-muted-foreground/40 relative z-10" />
+                    </div>
                     {/* On-card filter even in empty state */}
-                    <div className="flex items-center gap-2 mt-2">
+                    <div className="flex items-center gap-2 mt-2" onClick={e => e.stopPropagation()}>
                         <Filter className="size-3.5 text-muted-foreground" />
-                        <select
+                        <FilterDropdown
                             value={subId}
-                            onChange={e => { setSubId(e.target.value); setRgFilter(''); }}
-                            onClick={e => e.stopPropagation()}
-                            className="h-7 rounded-lg border bg-background/80 px-2 text-xs focus:outline-none focus:ring-2 focus:ring-ring"
-                        >
-                            {subscriptions.map(s => <option key={s.id} value={s.id}>{displaySubName(s)}</option>)}
-                        </select>
+                            onValueChange={v => { setSubId(v); setRgFilter(''); }}
+                            options={subscriptions.map(s => ({ value: s.id, label: displaySubName(s) }))}
+                            className="max-w-[140px]"
+                        />
                     </div>
                     <span className="text-sm text-muted-foreground">No policy compliance data</span>
                 </div>
@@ -138,7 +140,7 @@ export function ComplianceCard({ subscriptions, subDataMap, defaultSubId }: Prop
     return (
         <TooltipProvider delayDuration={150}>
             <div
-                className={`glass-card gradient-border scan-line cursor-pointer ${!isHealthy ? 'glow-warning' : ''}`}
+                className={`glass-card gradient-border scan-line cursor-pointer transition-all duration-300 hover:shadow-lg hover:-translate-y-1 hover:border-border/60 ${!isHealthy ? 'glow-warning' : ''}`}
                 onClick={() => setExpanded(v => !v)}
                 role="button"
                 tabIndex={0}
@@ -148,7 +150,7 @@ export function ComplianceCard({ subscriptions, subDataMap, defaultSubId }: Prop
                 <div className="flex items-start justify-between px-5 pt-5 pb-3 gap-2">
                     <div className="flex items-center gap-2.5">
                         <div className={`p-2 rounded-lg ${accentBg} ring-1 ring-inset`} style={{ boxShadow: `inset 0 0 0 1px ${accentColor}30` }}>
-                            <ShieldCheck className="size-5" style={{ color: accentColor }} />
+                            <ShieldCheck className={`size-5 ${!isHealthy ? 'animate-pulse' : ''}`} style={{ color: accentColor }} />
                         </div>
                         <div>
                             <h3 className="font-semibold text-sm tracking-wide uppercase text-muted-foreground leading-none">
@@ -172,23 +174,19 @@ export function ComplianceCard({ subscriptions, subDataMap, defaultSubId }: Prop
                     onClick={e => e.stopPropagation()}
                 >
                     <Filter className="size-3 text-muted-foreground shrink-0" />
-                    <select
+                    <FilterDropdown
                         value={subId}
-                        onChange={e => { setSubId(e.target.value); setRgFilter(''); }}
-                        className="h-7 max-w-[160px] rounded-lg border bg-background/80 px-2 text-[11px] font-medium focus:outline-none focus:ring-2 focus:ring-ring truncate"
-                        title={sub?.name}
-                    >
-                        {subscriptions.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-                    </select>
+                        onValueChange={v => { setSubId(v); setRgFilter(''); }}
+                        options={subscriptions.map(s => ({ value: s.id, label: s.name }))}
+                        className="max-w-[160px]"
+                    />
                     {availableRGs.length > 0 && (
-                        <select
+                        <FilterDropdown
                             value={rgFilter}
-                            onChange={e => setRgFilter(e.target.value)}
-                            className="h-7 max-w-[150px] rounded-lg border bg-background/80 px-2 text-[11px] font-medium focus:outline-none focus:ring-2 focus:ring-ring"
-                        >
-                            <option value="">All RGs</option>
-                            {availableRGs.map(rg => <option key={rg} value={rg}>{rg}</option>)}
-                        </select>
+                            onValueChange={v => setRgFilter(v)}
+                            options={[{ value: '', label: 'All RGs' }, ...availableRGs.map(rg => ({ value: rg, label: rg }))]}
+                            className="max-w-[150px]"
+                        />
                     )}
                     <Tooltip>
                         <TooltipTrigger asChild>

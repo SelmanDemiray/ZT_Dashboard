@@ -7,6 +7,7 @@ import { ShieldCheck, Filter, ChevronDown, ChevronUp, AlertTriangle, CheckCircle
 import type { PolicyCompliance, PolicyInitiative, TenantSubscription, RunSnapshot } from '@/types/assessment';
 import { displaySubName } from '@/lib/format-sub-name';
 import { useShowMore } from '@/hooks/useShowMore';
+import { FilterDropdown } from '@/components/ui/FilterDropdown';
 
 interface Props {
     subscriptions: TenantSubscription[];
@@ -32,7 +33,7 @@ export function ComplianceDeepDiveCard({ subscriptions, subDataMap, defaultSubId
     const [searchTerm, setSearchTerm] = useState('');
 
     const data: PolicyCompliance | null = subDataMap[subId]?.latestSnapshot?.policyCompliance ?? null;
-    const initiatives = data?.initiatives ?? [];
+    const initiatives = useMemo(() => data?.initiatives ?? [], [data?.initiatives]);
 
     /* Filtered initiatives */
     const filtered = useMemo(() => {
@@ -98,7 +99,7 @@ export function ComplianceDeepDiveCard({ subscriptions, subDataMap, defaultSubId
     }
 
     return (
-        <div className="glass-card gradient-border scan-line overflow-hidden">
+        <div className="glass-card gradient-border scan-line overflow-hidden flex flex-col h-[600px]">
             {/* Header */}
             <div className="p-4 sm:p-5 border-b border-border/50">
                 <div className="flex flex-wrap items-center justify-between gap-3">
@@ -108,25 +109,23 @@ export function ComplianceDeepDiveCard({ subscriptions, subDataMap, defaultSubId
                     </div>
                     <div className="flex flex-wrap items-center gap-2">
                         {/* Subscription filter */}
-                        <select
+                        <FilterDropdown
                             value={subId}
-                            onChange={e => setSubId(e.target.value)}
-                            className="h-7 rounded-md border border-input bg-background px-2 text-xs ring-offset-background focus:outline-none focus:ring-1 focus:ring-ring"
-                        >
-                            {subscriptions.map(s => (
-                                <option key={s.id} value={s.id}>{displaySubName(s)}</option>
-                            ))}
-                        </select>
+                            onValueChange={v => setSubId(v)}
+                            options={subscriptions.map(s => ({ value: s.id, label: displaySubName(s) }))}
+                            className="w-[140px]"
+                        />
                         {/* Type filter */}
-                        <select
+                        <FilterDropdown
                             value={typeFilter}
-                            onChange={e => setTypeFilter(e.target.value as 'all' | 'builtin' | 'custom')}
-                            className="h-7 rounded-md border border-input bg-background px-2 text-xs ring-offset-background focus:outline-none focus:ring-1 focus:ring-ring"
-                        >
-                            <option value="all">All Types</option>
-                            <option value="builtin">Built-in</option>
-                            <option value="custom">Custom</option>
-                        </select>
+                            onValueChange={v => setTypeFilter(v as 'all' | 'builtin' | 'custom')}
+                            options={[
+                                { value: 'all', label: 'All Types' },
+                                { value: 'builtin', label: 'Built-in' },
+                                { value: 'custom', label: 'Custom' }
+                            ]}
+                            className="w-[110px]"
+                        />
                         {/* Search */}
                         <div className="relative">
                             <Filter size={12} className="absolute left-2 top-1/2 -translate-y-1/2 text-muted-foreground" />
@@ -143,7 +142,7 @@ export function ComplianceDeepDiveCard({ subscriptions, subDataMap, defaultSubId
             </div>
 
             {/* Content grid */}
-            <div className="p-4 sm:p-5">
+            <div className="p-4 sm:p-5 flex flex-col flex-1 min-h-0">
                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
                     {/* Left: Donut + quick stats */}
                     <div className="flex flex-col items-center gap-3">
@@ -221,7 +220,7 @@ export function ComplianceDeepDiveCard({ subscriptions, subDataMap, defaultSubId
                 </div>
 
                 {/* Initiative list */}
-                <div className="mt-5 space-y-2 max-h-[280px] overflow-y-auto pr-1 scrollbar-thin">
+                <div className="mt-5 space-y-2 flex-1 min-h-0 overflow-y-auto pr-1 scrollbar-thin">
                     {filtered.length === 0 && (
                         <p className="text-center text-xs text-muted-foreground py-4">No initiatives match the current filters.</p>
                     )}

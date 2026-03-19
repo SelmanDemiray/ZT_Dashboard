@@ -1,6 +1,6 @@
-import { cn } from '@/lib/utils';
 import type { TrendsFilterState } from '@/types/assessment';
 import type { TenantSubscription } from '@/types/assessment';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 
 interface TrendsFilterBarProps {
     filters: TrendsFilterState;
@@ -115,25 +115,21 @@ interface TrendsSelectProps {
 function TrendsSelect({ label, value, options, onChange }: TrendsSelectProps) {
     return (
         <div className="flex items-center gap-1.5">
-            <label className="text-xs font-medium text-muted-foreground whitespace-nowrap">
+            <label className="text-[11px] uppercase font-semibold tracking-wider text-muted-foreground whitespace-nowrap">
                 {label}
             </label>
-            <select
-                value={value}
-                onChange={(e) => onChange(e.target.value)}
-                className={cn(
-                    'h-8 rounded-md border border-input bg-background px-2 py-1 text-sm',
-                    'ring-offset-background focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2',
-                    'text-foreground'
-                )}
-                aria-label={label}
-            >
-                {options.map((opt) => (
-                    <option key={opt.value} value={opt.value}>
-                        {opt.label}
-                    </option>
-                ))}
-            </select>
+            <Select value={value} onValueChange={onChange}>
+                <SelectTrigger className="h-8 max-w-[200px] text-xs glass-card border-none hover:bg-muted/50 transition-colors">
+                    <SelectValue placeholder="Select..." />
+                </SelectTrigger>
+                <SelectContent className="glass-card">
+                    {options.map((opt) => (
+                        <SelectItem key={opt.value} value={opt.value} className="text-xs">
+                            {opt.label || 'None'}
+                        </SelectItem>
+                    ))}
+                </SelectContent>
+            </Select>
         </div>
     );
 }

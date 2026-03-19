@@ -1,15 +1,25 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, memo } from 'react';
 import { useGlobalFilters } from '@/contexts/GlobalFilterContext';
 import { fetchRunSnapshot, fetchAllSnapshots } from '@/services/blobService';
-import { ComplianceCard } from './ComplianceCard';
-import { GovernanceCard } from './GovernanceCard';
-import { DefenderCard } from './DefenderCard';
-import { TrendSparkCards } from './TrendSparkCards';
-import { SecurityScoreGauge } from './SecurityScoreGauge';
-import { ComplianceDeepDiveCard } from './ComplianceDeepDiveCard';
-import { PolicyExplorerCard } from './PolicyExplorerCard';
-import { RecommendationsCard } from './RecommendationsCard';
-import { GovernanceRulesCard } from './GovernanceRulesCard';
+import { ComplianceCard as _ComplianceCard } from './ComplianceCard';
+import { GovernanceCard as _GovernanceCard } from './GovernanceCard';
+import { DefenderCard as _DefenderCard } from './DefenderCard';
+import { TrendSparkCards as _TrendSparkCards } from './TrendSparkCards';
+import { SecurityScoreGauge as _SecurityScoreGauge } from './SecurityScoreGauge';
+import { ComplianceDeepDiveCard as _ComplianceDeepDiveCard } from './ComplianceDeepDiveCard';
+import { PolicyExplorerCard as _PolicyExplorerCard } from './PolicyExplorerCard';
+import { RecommendationsCard as _RecommendationsCard } from './RecommendationsCard';
+import { GovernanceRulesCard as _GovernanceRulesCard } from './GovernanceRulesCard';
+
+const ComplianceCard = memo(_ComplianceCard);
+const GovernanceCard = memo(_GovernanceCard);
+const DefenderCard = memo(_DefenderCard);
+const TrendSparkCards = memo(_TrendSparkCards);
+const SecurityScoreGauge = memo(_SecurityScoreGauge);
+const ComplianceDeepDiveCard = memo(_ComplianceDeepDiveCard);
+const PolicyExplorerCard = memo(_PolicyExplorerCard);
+const RecommendationsCard = memo(_RecommendationsCard);
+const GovernanceRulesCard = memo(_GovernanceRulesCard);
 import { Skeleton } from '@/components/ui/skeleton';
 import type { RunSnapshot, TenantSubscription } from '@/types/assessment';
 import { Activity, Sparkles } from 'lucide-react';
@@ -105,30 +115,35 @@ export function OverviewCards() {
 
             {/* ── Loading skeletons ── */}
             {loading && (
-                <div className="space-y-6">
-                    <Skeleton className="h-[160px] rounded-2xl" />
-                    <div className="grid gap-5 md:grid-cols-3">
+                <div className="space-y-8 w-full animate-in fade-in duration-500 dashboard-grid-stagger">
+                    {/* 1. Zero Trust Score Gauge */}
+                    <Skeleton className="h-[220px] rounded-3xl glass-card shimmer" />
+                    
+                    {/* 2. Original summary cards */}
+                    <div className="grid gap-5 grid-cols-1 md:grid-cols-3">
                         {[0, 1, 2].map(i => (
-                            <div key={i} className="glass-card gradient-border p-6 space-y-4 min-h-[300px]">
+                            <div key={i} className="glass-card p-6 flex flex-col gap-4 h-[380px]">
                                 <div className="flex items-center gap-3">
-                                    <Skeleton className="h-9 w-9 rounded-lg" />
-                                    <Skeleton className="h-5 w-32" />
-                                    <Skeleton className="h-7 w-28 ml-auto rounded-lg" />
+                                    <Skeleton className="h-10 w-10 rounded-xl shimmer" />
+                                    <Skeleton className="h-6 w-32 shimmer" />
                                 </div>
-                                <Skeleton className="h-28 w-full rounded-xl" />
-                                <div className="space-y-2">
-                                    {[0, 1, 2, 3].map(j => <Skeleton key={j} className="h-4 w-full rounded" />)}
-                                </div>
+                                <Skeleton className="h-[180px] w-full rounded-2xl mt-auto shimmer" />
                             </div>
                         ))}
                     </div>
+
+                    {/* 3. Deep-dive section */}
                     <div className="grid gap-5 grid-cols-1 lg:grid-cols-2">
-                        <Skeleton className="h-[350px] rounded-2xl" />
-                        <Skeleton className="h-[350px] rounded-2xl" />
+                        {[0, 1].map(i => <Skeleton key={i} className="h-[420px] rounded-3xl glass-card shimmer" />)}
                     </div>
-                    <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-4">
-                        {[0, 1, 2, 3].map(i => <Skeleton key={i} className="h-[140px] rounded-2xl" />)}
+
+                    {/* 4. Recommendations & Governance detail */}
+                    <div className="grid gap-5 grid-cols-1 lg:grid-cols-2">
+                        {[0, 1].map(i => <Skeleton key={i} className="h-[420px] rounded-3xl glass-card shimmer" />)}
                     </div>
+
+                    {/* 5. Trend sparklines */}
+                    <Skeleton className="h-[180px] rounded-3xl glass-card shimmer" />
                 </div>
             )}
 
@@ -136,10 +151,12 @@ export function OverviewCards() {
             {!loading && Object.keys(subDataMap).length > 0 && (
                 <>
                     {/* 1. Zero Trust Score Gauge — full width hero */}
-                    <SecurityScoreGauge data={ztData} />
+                    <div className="dashboard-stagger-single">
+                        <SecurityScoreGauge data={ztData} />
+                    </div>
 
                     {/* 2. Original summary cards — 3 column */}
-                    <div className="grid gap-5 grid-cols-1 md:grid-cols-3">
+                    <div className="grid gap-5 grid-cols-1 md:grid-cols-3 dashboard-grid-stagger">
                         <ComplianceCard
                             subscriptions={availableSubscriptions}
                             subDataMap={subDataMap}
@@ -158,7 +175,7 @@ export function OverviewCards() {
                     </div>
 
                     {/* 3. Deep-dive section — 2 column, compliance focused */}
-                    <div className="grid gap-5 grid-cols-1 lg:grid-cols-2">
+                    <div className="grid gap-5 grid-cols-1 lg:grid-cols-2 dashboard-grid-stagger">
                         <ComplianceDeepDiveCard
                             subscriptions={availableSubscriptions}
                             subDataMap={subDataMap}
@@ -172,7 +189,7 @@ export function OverviewCards() {
                     </div>
 
                     {/* 4. Recommendations & Governance detail — 2 column */}
-                    <div className="grid gap-5 grid-cols-1 lg:grid-cols-2">
+                    <div className="grid gap-5 grid-cols-1 lg:grid-cols-2 dashboard-grid-stagger">
                         <RecommendationsCard
                             subscriptions={availableSubscriptions}
                             subDataMap={subDataMap}
@@ -186,19 +203,21 @@ export function OverviewCards() {
                     </div>
 
                     {/* 5. Trend sparklines */}
-                    <TrendSparkCards
-                        subscriptions={availableSubscriptions}
-                        subDataMap={subDataMap}
-                        defaultSubId={filters.subscriptionId}
-                    />
+                    <div className="dashboard-stagger-single">
+                        <TrendSparkCards
+                            subscriptions={availableSubscriptions}
+                            subDataMap={subDataMap}
+                            defaultSubId={filters.subscriptionId}
+                        />
+                    </div>
                 </>
             )}
 
             {/* ── Empty state ── */}
             {!loading && Object.keys(subDataMap).length === 0 && (
-                <div className="glass-card gradient-border p-10 text-center">
-                    <Activity className="size-10 text-muted-foreground mx-auto mb-3 opacity-50" />
-                    <p className="text-sm text-muted-foreground">
+                <div className="glass-card gradient-border p-10 text-center animate-in fade-in slide-in-from-bottom-2 duration-700">
+                    <Activity className="size-10 text-muted-foreground mx-auto mb-3 opacity-30 animate-pulse" />
+                    <p className="text-sm text-muted-foreground/80">
                         Select a tenant from the global filter bar to view security posture data.
                     </p>
                 </div>

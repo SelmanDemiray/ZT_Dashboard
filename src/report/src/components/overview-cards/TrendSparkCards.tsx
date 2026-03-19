@@ -13,6 +13,7 @@ import {
     TooltipProvider,
     TooltipTrigger,
 } from '@/components/ui/tooltip';
+import { FilterDropdown } from '@/components/ui/FilterDropdown';
 
 interface SubDataEntry {
     sub: TenantSubscription;
@@ -151,7 +152,7 @@ function SparkCard({ metric, subId, setSubId, subscriptions }: {
     return (
         <TooltipProvider delayDuration={100}>
             <div
-                className="glass-card gradient-border scan-line cursor-pointer flex flex-col gap-0"
+                className="glass-card gradient-border scan-line cursor-pointer flex flex-col gap-0 transition-all duration-300 hover:shadow-lg hover:-translate-y-1 hover:border-border/60"
                 onClick={() => setExpanded(v => !v)}
                 role="button"
                 tabIndex={0}
@@ -184,13 +185,12 @@ function SparkCard({ metric, subId, setSubId, subscriptions }: {
                     {/* On-card sub filter */}
                     <div className="flex items-center gap-1.5 mt-2" onClick={e => e.stopPropagation()}>
                         <Filter className="size-2.5 text-muted-foreground shrink-0" />
-                        <select
+                        <FilterDropdown
                             value={subId}
-                            onChange={e => setSubId(e.target.value)}
-                            className="h-6 w-full rounded-md border bg-background/80 px-1.5 text-[10px] font-medium focus:outline-none focus:ring-1 focus:ring-ring"
-                        >
-                            {subscriptions.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-                        </select>
+                            onValueChange={v => setSubId(v)}
+                            options={subscriptions.map(s => ({ value: s.id, label: s.name }))}
+                            className="w-full flex-1"
+                        />
                     </div>
                 </div>
 

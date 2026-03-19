@@ -1,4 +1,5 @@
-import { createContext, useContext, useReducer, useEffect, useCallback, type ReactNode } from 'react';
+/* eslint-disable react-refresh/only-export-components */
+import { createContext, useContext, useReducer, useEffect, useCallback, useMemo, type ReactNode } from 'react';
 import type { GlobalFilterState, TenantIndex, TenantEntry, TenantSubscription } from '@/types/assessment';
 import type { ZeroTrustAssessmentReport } from '@/config/report-data';
 import { reportData as staticReportData } from '@/config/report-data';
@@ -136,24 +137,29 @@ export function GlobalFilterProvider({ children }: { children: ReactNode }) {
         return () => {
             cancelled = true;
         };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
     // ─── Cascading derived lists ──────────────────────────────────────
 
-    const availableTenants = tenantIndex?.tenants ?? [];
+    const availableTenants = useMemo(() => tenantIndex?.tenants ?? [], [tenantIndex]);
 
-    const availableSubscriptions =
-        availableTenants.find((t) => t.id === filters.tenantId)?.subscriptions ?? [];
+    const availableSubscriptions = useMemo(() => 
+        availableTenants.find((t) => t.id === filters.tenantId)?.subscriptions ?? [],
+        [availableTenants, filters.tenantId]
+    );
 
-    const availableResourceGroups =
-        availableSubscriptions.find((s) => s.id === filters.subscriptionId)
-            ?.resourceGroups ?? [];
+    const availableResourceGroups = useMemo(() => 
+        availableSubscriptions.find((s) => s.id === filters.subscriptionId)?.resourceGroups ?? [],
+        [availableSubscriptions, filters.subscriptionId]
+    );
 
-    const availableDates =
-        availableSubscriptions.find((s) => s.id === filters.subscriptionId)
-            ?.dates ?? [];
+    const availableDates = useMemo(() => 
+        availableSubscriptions.find((s) => s.id === filters.subscriptionId)?.dates ?? [],
+        [availableSubscriptions, filters.subscriptionId]
+    );
 
-    const value: GlobalFilterContextValue = {
+    const value: GlobalFilterContextValue = useMemo(() => ({
         filters,
         tenantIndex,
         loading,
@@ -164,7 +170,17 @@ export function GlobalFilterProvider({ children }: { children: ReactNode }) {
         availableSubscriptions,
         availableResourceGroups,
         availableDates,
-    };
+    }), [
+        filters,
+        tenantIndex,
+        loading,
+        liveReportData,
+        reportLoading,
+        availableTenants,
+        availableSubscriptions,
+        availableResourceGroups,
+        availableDates
+    ]);
 
     return (
         <GlobalFilterContext.Provider value={value}>

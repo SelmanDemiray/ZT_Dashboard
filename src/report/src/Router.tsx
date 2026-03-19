@@ -2,15 +2,17 @@ import { createHashRouter } from "react-router-dom";
 
 import { Applayout } from "./components/layouts/AppLayout";
 
-import NoMatch from "./pages/NoMatch";
-import Dashboard from "./pages/Dashboard";
-import Identity from "./pages/Identity";
-import Devices from "./pages/Devices";
-import Apps from "./pages/Apps";
-import Network from "./pages/Network";
-import Infrastructure from "./pages/Infrastructure";
-import Data from "./pages/Data";
-import Trends from "./pages/Trends";
+import { lazy } from "react";
+
+const NoMatch = lazy(() => import("./pages/NoMatch"));
+const Dashboard = lazy(() => import("./pages/Dashboard"));
+const Identity = lazy(() => import("./pages/Identity"));
+const Devices = lazy(() => import("./pages/Devices"));
+const Apps = lazy(() => import("./pages/Apps"));
+const Network = lazy(() => import("./pages/Network"));
+const Infrastructure = lazy(() => import("./pages/Infrastructure"));
+const Data = lazy(() => import("./pages/Data"));
+const Trends = lazy(() => import("./pages/Trends"));
 
 export const router = createHashRouter([
     {

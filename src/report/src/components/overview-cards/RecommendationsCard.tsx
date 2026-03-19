@@ -6,6 +6,7 @@ import {
 } from 'recharts';
 import { ShieldAlert, Search, ChevronDown, ChevronUp, Zap, ExternalLink } from 'lucide-react';
 import type { DefenderRecs, DefenderRecommendation, Severity, TenantSubscription, RunSnapshot } from '@/types/assessment';
+import { FilterDropdown } from '@/components/ui/FilterDropdown';
 
 interface Props {
     subscriptions: TenantSubscription[];
@@ -25,9 +26,10 @@ export function RecommendationsCard({ subscriptions, subDataMap, defaultSubId }:
     const [sevFilter, setSevFilter] = useState<Severity | ''>('');
     const [searchTerm, setSearchTerm] = useState('');
     const [expandedId, setExpandedId] = useState<string | null>(null);
+    const { limit, showMore, hasMore } = useShowMore(25);
 
     const data: DefenderRecs | null = subDataMap[subId]?.latestSnapshot?.defenderRecs ?? null;
-    const recs = data?.recommendations ?? [];
+    const recs = useMemo(() => data?.recommendations ?? [], [data?.recommendations]);
 
     /* Filtered recommendations */
     const filtered = useMemo(() => {
@@ -65,13 +67,12 @@ export function RecommendationsCard({ subscriptions, subDataMap, defaultSubId }:
             <div className="glass-card gradient-border p-6 flex flex-col items-center justify-center text-muted-foreground h-48 gap-3">
                 <ShieldAlert size={20} className="opacity-50" />
                 No recommendation data
-                <select
+                <FilterDropdown
                     value={subId}
-                    onChange={e => setSubId(e.target.value)}
-                    className="h-7 rounded-md border border-input bg-background/50 px-2 text-xs focus:outline-none"
-                >
-                    {subscriptions.map(s => <option key={s.id} value={s.id}>{displaySubName(s)}</option>)}
-                </select>
+                    onValueChange={v => setSubId(v)}
+                    options={subscriptions.map(s => ({ value: s.id, label: displaySubName(s) }))}
+                    className="w-[200px]"
+                />
             </div>
         );
     }
@@ -84,13 +85,12 @@ export function RecommendationsCard({ subscriptions, subDataMap, defaultSubId }:
                 <p className="text-xs text-muted-foreground max-w-[300px]">
                     No open recommendations exist for this subscription. Ensure Defender plans are enabled.
                 </p>
-                <select
+                <FilterDropdown
                     value={subId}
-                    onChange={e => setSubId(e.target.value)}
-                    className="h-7 rounded-md border border-input bg-background/50 px-2 text-xs focus:outline-none"
-                >
-                    {subscriptions.map(s => <option key={s.id} value={s.id}>{displaySubName(s)}</option>)}
-                </select>
+                    onValueChange={v => setSubId(v)}
+                    options={subscriptions.map(s => ({ value: s.id, label: displaySubName(s) }))}
+                    className="w-[200px]"
+                />
             </div>
         );
     }
@@ -105,25 +105,21 @@ export function RecommendationsCard({ subscriptions, subDataMap, defaultSubId }:
                         <h3 className="text-sm font-semibold tracking-tight">Defender Recommendations</h3>
                     </div>
                     <div className="flex flex-wrap items-center gap-2">
-                        <select
+                        <FilterDropdown
                             value={subId}
-                            onChange={e => setSubId(e.target.value)}
-                            className="h-7 rounded-md border border-input bg-background px-2 text-xs focus:outline-none focus:ring-1 focus:ring-ring"
-                        >
-                            {subscriptions.map(s => (
-                                <option key={s.id} value={s.id}>{displaySubName(s)}</option>
-                            ))}
-                        </select>
-                        <select
+                            onValueChange={v => setSubId(v)}
+                            options={subscriptions.map(s => ({ value: s.id, label: displaySubName(s) }))}
+                            className="w-[140px]"
+                        />
+                        <FilterDropdown
                             value={sevFilter}
-                            onChange={e => setSevFilter(e.target.value as Severity | '')}
-                            className="h-7 rounded-md border border-input bg-background px-2 text-xs focus:outline-none focus:ring-1 focus:ring-ring"
-                        >
-                            <option value="">All Severities</option>
-                            {Object.entries(SEV_CONFIG).map(([k, v]) => (
-                                <option key={k} value={k}>{v.label}</option>
-                            ))}
-                        </select>
+                            onValueChange={v => setSevFilter(v as Severity | '')}
+                            options={[
+                                { value: '', label: 'All Severities' },
+                                ...Object.entries(SEV_CONFIG).map(([k, v]) => ({ value: k, label: v.label }))
+                            ]}
+                            className="w-[140px]"
+                        />
                     </div>
                 </div>
             </div>
@@ -197,7 +193,7 @@ export function RecommendationsCard({ subscriptions, subDataMap, defaultSubId }:
                             {filtered.length === 0 && (
                                 <p className="text-center text-xs text-muted-foreground py-4">No recommendations match.</p>
                             )}
-                            {filtered.map(rec => {
+                            {filtered.slice(0, limit).map(rec => {
                                 const isExpanded = expandedId === rec.id;
                                 const sev = SEV_CONFIG[rec.severity];
                                 return (
@@ -205,6 +201,14 @@ export function RecommendationsCard({ subscriptions, subDataMap, defaultSubId }:
                                         onToggle={() => setExpandedId(isExpanded ? null : rec.id)} />
                                 );
                             })}
+                            {hasMore(filtered.length) && (
+                                <button
+                                    onClick={() => showMore()}
+                                    className="w-full mt-2 py-2 rounded-md text-xs font-medium text-primary hover:bg-primary/10 border border-primary/20 transition-all"
+                                >
+                                    Show more ({filtered.length - limit} remaining)
+                                </button>
+                            )}
                         </div>
                     </div>
                 </div>
@@ -276,7 +280,7 @@ function RecItem({ rec, sev, isExpanded, onToggle }: {
     );
 }
 
-function AffectedResources({ resources, sev }: { resources: NonNullable<DefenderRecs['recommendations'][0]>['affectedResources'], sev: any }) {
+function AffectedResources({ resources, sev }: { resources: NonNullable<DefenderRecs['recommendations'][0]>['affectedResources'], sev: { color: string; label: string } }) {
     const { limit, showMore, hasMore } = useShowMore(10);
     const visible = resources.slice(0, limit);
 

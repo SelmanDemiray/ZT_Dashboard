@@ -13,6 +13,7 @@ import {
     TooltipProvider,
     TooltipTrigger,
 } from '@/components/ui/tooltip';
+import { FilterDropdown } from '@/components/ui/FilterDropdown';
 
 interface SubDataEntry {
     sub: TenantSubscription;
@@ -75,17 +76,18 @@ export function GovernanceCard({ subscriptions, subDataMap, defaultSubId }: Prop
     if (!data) {
         return (
             <TooltipProvider>
-                <div className="glass-card gradient-border scan-line p-6 flex flex-col items-center justify-center min-h-[300px] gap-3">
-                    <ClipboardList className="size-10 text-muted-foreground/40" />
+                <div className="glass-card gradient-border scan-line p-6 flex flex-col items-center justify-center min-h-[300px] gap-3 transition-all duration-300">
+                    <div className="relative">
+                        <div className="absolute inset-0 bg-muted/20 animate-ping rounded-full" />
+                        <ClipboardList className="size-10 text-muted-foreground/40 relative z-10" />
+                    </div>
                     <div className="flex items-center gap-2" onClick={e => e.stopPropagation()}>
                         <Filter className="size-3.5 text-muted-foreground" />
-                        <select
-                            value={subId}
-                            onChange={e => setSubId(e.target.value)}
-                            className="h-7 rounded-lg border bg-background/80 px-2 text-xs focus:outline-none focus:ring-2 focus:ring-ring"
-                        >
-                            {subscriptions.map(s => <option key={s.id} value={s.id}>{displaySubName(s)}</option>)}
-                        </select>
+                        <FilterDropdown 
+                            value={subId} 
+                            onValueChange={setSubId} 
+                            options={subscriptions.map(s => ({ value: s.id, label: displaySubName(s) }))}
+                        />
                     </div>
                     <span className="text-sm text-muted-foreground">No governance data</span>
                 </div>
@@ -96,7 +98,7 @@ export function GovernanceCard({ subscriptions, subDataMap, defaultSubId }: Prop
     return (
         <TooltipProvider delayDuration={150}>
             <div
-                className={`glass-card gradient-border scan-line cursor-pointer ${hasOverdue ? 'glow-warning' : ''}`}
+                className={`glass-card gradient-border scan-line cursor-pointer transition-all duration-300 hover:shadow-lg hover:-translate-y-1 hover:border-border/60 ${hasOverdue ? 'glow-warning' : ''}`}
                 onClick={() => setExpanded(v => !v)}
                 role="button"
                 tabIndex={0}
@@ -110,7 +112,7 @@ export function GovernanceCard({ subscriptions, subDataMap, defaultSubId }: Prop
                             style={{ background: hasOverdue ? '#ef444418' : '#3b82f618', outline: `1px solid ${accentColor}30` }}
                         >
                             {hasOverdue
-                                ? <AlertTriangle className="size-5 text-red-500" />
+                                ? <AlertTriangle className="size-5 text-red-500 animate-pulse" />
                                 : <CheckCircle2 className="size-5 text-blue-500" />}
                         </div>
                         <div>
@@ -134,33 +136,28 @@ export function GovernanceCard({ subscriptions, subDataMap, defaultSubId }: Prop
                     onClick={e => e.stopPropagation()}
                 >
                     <Filter className="size-3 text-muted-foreground shrink-0" />
-                    <select
-                        value={subId}
-                        onChange={e => { setSubId(e.target.value); setRgFilter(''); }}
-                        className="h-7 max-w-[140px] rounded-lg border bg-background/80 px-2 text-[11px] font-medium focus:outline-none focus:ring-2 focus:ring-ring truncate"
-                    >
-                        {subscriptions.map(s => <option key={s.id} value={s.id}>{displaySubName(s)}</option>)}
-                    </select>
+                    <FilterDropdown 
+                        value={subId} 
+                        onValueChange={(v) => { setSubId(v); setRgFilter(''); }} 
+                        options={subscriptions.map(s => ({ value: s.id, label: displaySubName(s) }))} 
+                        className="max-w-[140px]" 
+                    />
                     {availableRGs.length > 0 && (
-                        <select
-                            value={rgFilter}
-                            onChange={e => setRgFilter(e.target.value)}
-                            className="h-7 max-w-[120px] rounded-lg border bg-background/80 px-2 text-[11px] font-medium focus:outline-none focus:ring-2 focus:ring-ring"
-                        >
-                            <option value="">All RGs</option>
-                            {availableRGs.map(rg => <option key={rg} value={rg}>{rg}</option>)}
-                        </select>
+                        <FilterDropdown 
+                            value={rgFilter} 
+                            onValueChange={setRgFilter} 
+                            options={[{ value: '', label: 'All RGs' }, ...availableRGs.map(rg => ({ value: rg, label: rg }))]} 
+                            className="max-w-[120px]" 
+                        />
                     )}
-                    <select
-                        value={statusFilter}
-                        onChange={e => setStatusFilter(e.target.value as GovernanceStatus | '')}
-                        className="h-7 rounded-lg border bg-background/80 px-2 text-[11px] font-medium focus:outline-none focus:ring-2 focus:ring-ring"
-                    >
-                        <option value="">All Statuses</option>
-                        {(Object.keys(STATUS_CONFIG) as GovernanceStatus[]).map(s => (
-                            <option key={s} value={s}>{STATUS_CONFIG[s].label}</option>
-                        ))}
-                    </select>
+                    <FilterDropdown 
+                        value={statusFilter} 
+                        onValueChange={(v) => setStatusFilter(v as GovernanceStatus | '')} 
+                        options={[
+                            { value: '', label: 'All Statuses' }, 
+                            ...(Object.keys(STATUS_CONFIG) as GovernanceStatus[]).map(s => ({ value: s, label: STATUS_CONFIG[s].label }))
+                        ]} 
+                    />
                     <Tooltip>
                         <TooltipTrigger asChild>
                             <button onClick={e => e.stopPropagation()} className="shrink-0 text-muted-foreground hover:text-foreground transition-colors">
@@ -235,7 +232,7 @@ export function GovernanceCard({ subscriptions, subDataMap, defaultSubId }: Prop
                             <h4 className="text-xs font-semibold uppercase text-muted-foreground tracking-wider flex items-center gap-2">
                                 <ClipboardList className="size-3.5" /> Rule Details
                             </h4>
-                            {filteredRules.map((rule) => {
+                            {filteredRules.map((rule, idx) => {
                                 const cfg = STATUS_CONFIG[rule.status];
                                 const Icon = cfg.icon;
                                 const daysUntilDue = Math.ceil((new Date(rule.dueDate).getTime() - Date.now()) / 86400000);
@@ -246,7 +243,8 @@ export function GovernanceCard({ subscriptions, subDataMap, defaultSubId }: Prop
                                     <Tooltip key={rule.id}>
                                         <TooltipTrigger asChild>
                                             <div
-                                                className="flex items-start gap-3 rounded-xl border px-3 py-2.5 text-sm hover:bg-muted/50 transition-all hover:shadow-sm group cursor-default"
+                                                className="flex items-start gap-3 rounded-xl border px-3 py-2.5 text-sm hover:bg-muted/50 transition-all hover:shadow-sm group cursor-default animate-in fade-in slide-in-from-bottom-2 fill-mode-both duration-300"
+                                                style={{ animationDelay: `${idx * 40}ms` }}
                                                 onClick={e => e.stopPropagation()}
                                             >
                                                 <Icon className="size-4 shrink-0 mt-0.5" style={{ color: cfg.color }} />

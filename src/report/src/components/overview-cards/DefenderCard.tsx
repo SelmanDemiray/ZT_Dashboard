@@ -14,6 +14,7 @@ import {
     TooltipProvider,
     TooltipTrigger,
 } from '@/components/ui/tooltip';
+import { FilterDropdown } from '@/components/ui/FilterDropdown';
 
 interface SubDataEntry {
     sub: TenantSubscription;
@@ -91,17 +92,19 @@ export function DefenderCard({ subscriptions, subDataMap, defaultSubId }: Props)
     if (!data) {
         return (
             <TooltipProvider>
-                <div className="glass-card gradient-border scan-line p-6 flex flex-col items-center justify-center min-h-[300px] gap-3">
-                    <Shield className="size-10 text-muted-foreground/40" />
+                <div className="glass-card gradient-border scan-line p-6 flex flex-col items-center justify-center min-h-[300px] gap-3 transition-all duration-300">
+                    <div className="relative">
+                        <div className="absolute inset-0 bg-muted/20 animate-ping rounded-full" />
+                        <Shield className="size-10 text-muted-foreground/40 relative z-10" />
+                    </div>
                     <div className="flex items-center gap-2" onClick={e => e.stopPropagation()}>
                         <Filter className="size-3.5 text-muted-foreground" />
-                        <select
+                        <FilterDropdown
                             value={subId}
-                            onChange={e => setSubId(e.target.value)}
-                            className="h-7 rounded-lg border bg-background/80 px-2 text-xs focus:outline-none focus:ring-2 focus:ring-ring"
-                        >
-                            {subscriptions.map(s => <option key={s.id} value={s.id}>{displaySubName(s)}</option>)}
-                        </select>
+                            onValueChange={v => setSubId(v)}
+                            options={subscriptions.map(s => ({ value: s.id, label: displaySubName(s) }))}
+                            className="max-w-[140px]"
+                        />
                     </div>
                     <span className="text-sm text-muted-foreground">No Defender data</span>
                 </div>
@@ -112,7 +115,7 @@ export function DefenderCard({ subscriptions, subDataMap, defaultSubId }: Props)
     return (
         <TooltipProvider delayDuration={150}>
             <div
-                className={`glass-card gradient-border scan-line cursor-pointer ${hasCritical ? 'glow-warning' : ''}`}
+                className={`glass-card gradient-border scan-line cursor-pointer transition-all duration-300 hover:shadow-lg hover:-translate-y-1 hover:border-border/60 ${hasCritical ? 'glow-warning' : ''}`}
                 onClick={() => setExpanded(v => !v)}
                 role="button"
                 tabIndex={0}
@@ -125,7 +128,7 @@ export function DefenderCard({ subscriptions, subDataMap, defaultSubId }: Props)
                             className="p-2 rounded-lg ring-1 ring-inset"
                             style={{ background: hasCritical ? '#ef444418' : '#f9731618' }}
                         >
-                            <Shield className="size-5" style={{ color: accentColor }} />
+                            <Shield className={`size-5 ${hasCritical ? 'animate-pulse' : ''}`} style={{ color: accentColor }} />
                         </div>
                         <div>
                             <h3 className="font-semibold text-sm tracking-wide uppercase text-muted-foreground leading-none">
@@ -147,34 +150,29 @@ export function DefenderCard({ subscriptions, subDataMap, defaultSubId }: Props)
                     onClick={e => e.stopPropagation()}
                 >
                     <Filter className="size-3 text-muted-foreground shrink-0" />
-                    <select
+                    <FilterDropdown
                         value={subId}
-                        onChange={e => { setSubId(e.target.value); setRgFilter(''); setSevFilter(''); }}
-                        className="h-7 max-w-[140px] rounded-lg border bg-background/80 px-2 text-[11px] font-medium focus:outline-none focus:ring-2 focus:ring-ring truncate"
-                    >
-                        {subscriptions.map(s => <option key={s.id} value={s.id}>{displaySubName(s)}</option>)}
-                    </select>
+                        onValueChange={v => { setSubId(v); setRgFilter(''); setSevFilter(''); }}
+                        options={subscriptions.map(s => ({ value: s.id, label: displaySubName(s) }))}
+                        className="max-w-[140px]"
+                    />
                     {availableRGs.length > 0 && (
-                        <select
+                        <FilterDropdown
                             value={rgFilter}
-                            onChange={e => setRgFilter(e.target.value)}
-                            className="h-7 max-w-[120px] rounded-lg border bg-background/80 px-2 text-[11px] font-medium focus:outline-none focus:ring-2 focus:ring-ring"
-                        >
-                            <option value="">All RGs</option>
-                            {availableRGs.map(rg => <option key={rg} value={rg}>{rg}</option>)}
-                        </select>
+                            onValueChange={v => setRgFilter(v)}
+                            options={[{ value: '', label: 'All RGs' }, ...availableRGs.map(rg => ({ value: rg, label: rg }))]}
+                            className="max-w-[120px]"
+                        />
                     )}
-                    <select
+                    <FilterDropdown
                         value={sevFilter}
-                        onChange={e => setSevFilter(e.target.value as Severity | '')}
-                        className="h-7 rounded-lg border bg-background/80 px-2 text-[11px] font-medium focus:outline-none focus:ring-2 focus:ring-ring"
-                        style={sevFilter ? { borderColor: SEVERITY_CONFIG[sevFilter].color, color: SEVERITY_CONFIG[sevFilter].color } : {}}
-                    >
-                        <option value="">All Severities</option>
-                        {(Object.keys(SEVERITY_CONFIG) as Severity[]).map(s => (
-                            <option key={s} value={s}>{SEVERITY_CONFIG[s].label}</option>
-                        ))}
-                    </select>
+                        onValueChange={v => setSevFilter(v as Severity | '')}
+                        options={[
+                            { value: '', label: 'All Severities' },
+                            ...(Object.keys(SEVERITY_CONFIG) as Severity[]).map(s => ({ value: s, label: SEVERITY_CONFIG[s].label }))
+                        ]}
+                        className="max-w-[140px]"
+                    />
                     <Tooltip>
                         <TooltipTrigger asChild>
                             <button onClick={e => e.stopPropagation()} className="shrink-0 text-muted-foreground hover:text-foreground transition-colors">

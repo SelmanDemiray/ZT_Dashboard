@@ -2,6 +2,7 @@ import { useState, useMemo } from 'react';
 import { displaySubName } from '@/lib/format-sub-name';
 import { Scale, ChevronDown, ChevronUp, CheckCircle2, Clock, AlertTriangle, User, Calendar, Link2 } from 'lucide-react';
 import type { Governance, GovernanceStatus, TenantSubscription, RunSnapshot } from '@/types/assessment';
+import { FilterDropdown } from '@/components/ui/FilterDropdown';
 
 interface Props {
     subscriptions: TenantSubscription[];
@@ -22,7 +23,7 @@ export function GovernanceRulesCard({ subscriptions, subDataMap, defaultSubId }:
     const [expandedId, setExpandedId] = useState<string | null>(null);
 
     const data: Governance | null = subDataMap[subId]?.latestSnapshot?.governance ?? null;
-    const rules = data?.rules ?? [];
+    const rules = useMemo(() => data?.rules ?? [], [data?.rules]);
 
     const filtered = useMemo(() => {
         if (!statusFilter) return rules;
@@ -68,25 +69,21 @@ export function GovernanceRulesCard({ subscriptions, subDataMap, defaultSubId }:
                         <h3 className="text-sm font-semibold tracking-tight">Governance Rules</h3>
                     </div>
                     <div className="flex flex-wrap items-center gap-2">
-                        <select
+                        <FilterDropdown
                             value={subId}
-                            onChange={e => setSubId(e.target.value)}
-                            className="h-7 rounded-md border border-input bg-background px-2 text-xs focus:outline-none focus:ring-1 focus:ring-ring"
-                        >
-                            {subscriptions.map(s => (
-                                <option key={s.id} value={s.id}>{displaySubName(s)}</option>
-                            ))}
-                        </select>
-                        <select
+                            onValueChange={v => setSubId(v)}
+                            options={subscriptions.map(s => ({ value: s.id, label: displaySubName(s) }))}
+                            className="w-[140px]"
+                        />
+                        <FilterDropdown
                             value={statusFilter}
-                            onChange={e => setStatusFilter(e.target.value as GovernanceStatus | '')}
-                            className="h-7 rounded-md border border-input bg-background px-2 text-xs focus:outline-none focus:ring-1 focus:ring-ring"
-                        >
-                            <option value="">All Statuses</option>
-                            {Object.entries(STATUS_CONFIG).map(([k, v]) => (
-                                <option key={k} value={k}>{v.label}</option>
-                            ))}
-                        </select>
+                            onValueChange={v => setStatusFilter(v as GovernanceStatus | '')}
+                            options={[
+                                { value: '', label: 'All Statuses' },
+                                ...Object.entries(STATUS_CONFIG).map(([k, v]) => ({ value: k, label: v.label }))
+                            ]}
+                            className="w-[140px]"
+                        />
                     </div>
                 </div>
             </div>
