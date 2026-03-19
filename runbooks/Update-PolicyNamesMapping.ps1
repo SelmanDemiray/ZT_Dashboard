@@ -139,8 +139,12 @@ try {
 
 Write-Log "Authenticating to Azure with UAMI..."
 try {
+    $oldWarningPreference = $WarningPreference
+    $WarningPreference = 'SilentlyContinue'
     Connect-AzAccount -Identity -AccountId $script:uamiClientId -Tenant $targetTenantId -Force | Out-Null
+    $WarningPreference = $oldWarningPreference
 } catch {
+    $WarningPreference = $oldWarningPreference
     Write-Log "Connect-AzAccount failed: $_" "ERROR"
     throw
 }
