@@ -46,6 +46,19 @@ foreach ($mod in $requiredModules) {
 }
 
 # ─── Auth Helpers ────────────────────────────────────────────────────────────
+
+# ── Clear inherited MSI/IDENTITY env vars ──
+# Automation Accounts inject environment variables that redirect Azure.Identity
+# to a restricted internal endpoint that doesn't always support UAMI selection.
+# Unsetting them forces the SDK to fall back to the VM's direct IMDS endpoint.
+$msiEnvVars = @('IDENTITY_ENDPOINT','IDENTITY_HEADER','MSI_ENDPOINT','MSI_SECRET')
+foreach ($v in $msiEnvVars) {
+    if ($null -ne [System.Environment]::GetEnvironmentVariable($v)) {
+        Write-Log "  Clearing inherited MSI env var: $v" "WARN"
+        [System.Environment]::SetEnvironmentVariable($v, $null)
+    }
+}
+
 function Get-ImdsToken {
     param(
         [Parameter(Mandatory)][string]$Resource,
