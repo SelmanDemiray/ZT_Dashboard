@@ -44,13 +44,13 @@ export function GlobalFilters() {
                 {availableResourceGroups.length > 0 && (
                     <FilterSelect
                         label="Resource Group"
-                        value={filters.resourceGroupId}
+                        value={filters.resourceGroupId || 'all'}
                         options={[
-                            { value: '', label: 'All' },
+                            { value: 'all', label: 'All' },
                             ...availableResourceGroups.map((rg) => ({ value: rg, label: rg })),
                         ]}
                         onChange={(v) =>
-                            dispatch({ type: 'SET_RESOURCE_GROUP', resourceGroupId: v })
+                            dispatch({ type: 'SET_RESOURCE_GROUP', resourceGroupId: v === 'all' ? '' : v })
                         }
                     />
                 )}
@@ -58,28 +58,28 @@ export function GlobalFilters() {
                 {/* Severity */}
                 <FilterSelect
                     label="Severity"
-                    value={filters.severity}
+                    value={filters.severity || 'all'}
                     options={[
-                        { value: '', label: 'All' },
+                        { value: 'all', label: 'All' },
                         { value: 'critical', label: 'Critical' },
                         { value: 'high', label: 'High' },
                         { value: 'medium', label: 'Medium' },
                         { value: 'low', label: 'Low' },
                     ]}
-                    onChange={(v) => dispatch({ type: 'SET_SEVERITY', severity: v })}
+                    onChange={(v) => dispatch({ type: 'SET_SEVERITY', severity: v === 'all' ? '' : v })}
                 />
 
                 {/* Status */}
                 <FilterSelect
                     label="Status"
-                    value={filters.status}
+                    value={filters.status || 'all'}
                     options={[
-                        { value: '', label: 'All' },
+                        { value: 'all', label: 'All' },
                         { value: 'passed', label: 'Passed' },
                         { value: 'failed', label: 'Failed' },
                         { value: 'investigate', label: 'Investigate' },
                     ]}
-                    onChange={(v) => dispatch({ type: 'SET_STATUS', status: v })}
+                    onChange={(v) => dispatch({ type: 'SET_STATUS', status: v === 'all' ? '' : v })}
                 />
             </div>
         </div>

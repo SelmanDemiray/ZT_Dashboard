@@ -15,6 +15,7 @@ import {
     DropdownMenuTrigger
 } from "@/components/ui/dropdown-menu";
 import { ModeToggle } from "@/components/mode-toggle";
+import { HelpModal } from "@/components/HelpModal";
 
 import { mainMenu } from "@/config/menu";
 import { ChevronDownIcon, ViewVerticalIcon } from "@radix-ui/react-icons";
@@ -170,6 +171,7 @@ export const Header = React.memo(function Header() {
                         {/* <CommandMenu /> */}
                     </div>
                     <nav aria-label="Theme utility and GitHub link" className="flex items-center space-x-2">
+                        <HelpModal />
                         <ModeToggle />
                         <a
                             href={ztAppConfig.github.url}

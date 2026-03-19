@@ -360,26 +360,26 @@ export default function Dashboard() {
                                             data={[
                                                 {
                                                     dataKey: "Windows",
-                                                    value: reportData.TenantInfo?.DeviceOverview?.ManagedDevices?.deviceOperatingSystemSummary?.windowsCount || 0,
-                                                    label: `${reportData.TenantInfo?.DeviceOverview?.ManagedDevices?.deviceOperatingSystemSummary?.windowsCount || 0}`,
+                                                    value: reportData.TenantInfo?.DeviceOverview?.DesktopDevicesSummary?.nodes?.find(n => n.source === "Desktop devices" && n.target === "Windows")?.value || 0,
+                                                    label: `${reportData.TenantInfo?.DeviceOverview?.DesktopDevicesSummary?.nodes?.find(n => n.source === "Desktop devices" && n.target === "Windows")?.value || 0}`,
                                                     fill: "hsl(var(--chart-1))",
                                                 },
                                                 {
                                                     dataKey: "macOS",
-                                                    value: reportData.TenantInfo?.DeviceOverview?.ManagedDevices?.deviceOperatingSystemSummary?.macOSCount || 0,
-                                                    label: `${reportData.TenantInfo?.DeviceOverview?.ManagedDevices?.deviceOperatingSystemSummary?.macOSCount || 0}`,
+                                                    value: reportData.TenantInfo?.DeviceOverview?.DesktopDevicesSummary?.nodes?.find(n => n.source === "Desktop devices" && n.target === "macOS")?.value || 0,
+                                                    label: `${reportData.TenantInfo?.DeviceOverview?.DesktopDevicesSummary?.nodes?.find(n => n.source === "Desktop devices" && n.target === "macOS")?.value || 0}`,
                                                     fill: "hsl(var(--chart-2))",
                                                 },
                                                 {
                                                     dataKey: "iOS",
-                                                    value: reportData.TenantInfo?.DeviceOverview?.ManagedDevices?.deviceOperatingSystemSummary?.iosCount || 0,
-                                                    label: `${reportData.TenantInfo?.DeviceOverview?.ManagedDevices?.deviceOperatingSystemSummary?.iosCount || 0}`,
+                                                    value: reportData.TenantInfo?.DeviceOverview?.MobileSummary?.nodes?.find(n => n.source === "Mobile devices" && n.target === "iOS")?.value || 0,
+                                                    label: `${reportData.TenantInfo?.DeviceOverview?.MobileSummary?.nodes?.find(n => n.source === "Mobile devices" && n.target === "iOS")?.value || 0}`,
                                                     fill: "hsl(var(--chart-3))",
                                                 },
                                                 {
                                                     dataKey: "Android",
-                                                    value: reportData.TenantInfo?.DeviceOverview?.ManagedDevices?.deviceOperatingSystemSummary?.androidCount || 0,
-                                                    label: `${reportData.TenantInfo?.DeviceOverview?.ManagedDevices?.deviceOperatingSystemSummary?.androidCount || 0}`,
+                                                    value: reportData.TenantInfo?.DeviceOverview?.MobileSummary?.nodes?.find(n => n.source === "Mobile devices" && n.target === "Android")?.value || 0,
+                                                    label: `${reportData.TenantInfo?.DeviceOverview?.MobileSummary?.nodes?.find(n => n.source === "Mobile devices" && n.target === "Android")?.value || 0}`,
                                                     fill: "hsl(var(--chart-5))",
                                                 },
                                                 {
@@ -423,8 +423,22 @@ export default function Dashboard() {
                                         <div className="grid flex-1 auto-rows-min gap-0.5">
                                             <div className="text-xs text-muted-foreground">Desktops</div>
                                             <div className="flex items-baseline gap-1 text-2xl font-bold tabular-nums leading-none">
-                                                {Math.round(((reportData.TenantInfo?.DeviceOverview?.ManagedDevices?.desktopCount || 0) /
-                                                    (reportData.TenantInfo?.DeviceOverview?.ManagedDevices?.totalCount || 1)) * 100)}
+                                                {(() => {
+                                                    const desktopNodes = reportData.TenantInfo?.DeviceOverview?.DesktopDevicesSummary?.nodes || [];
+                                                    const mobileNodes = reportData.TenantInfo?.DeviceOverview?.MobileSummary?.nodes || [];
+                                                    
+                                                    const winCount = desktopNodes.find(n => n.source === "Desktop devices" && n.target === "Windows")?.value || 0;
+                                                    const macCount = desktopNodes.find(n => n.source === "Desktop devices" && n.target === "macOS")?.value || 0;
+                                                    const iosCount = mobileNodes.find(n => n.source === "Mobile devices" && n.target === "iOS")?.value || 0;
+                                                    const andCount = mobileNodes.find(n => n.source === "Mobile devices" && n.target === "Android")?.value || 0;
+                                                    const linCount = reportData.TenantInfo?.DeviceOverview?.ManagedDevices?.deviceOperatingSystemSummary?.linuxCount || 0;
+                                                    
+                                                    const totalD = winCount + macCount;
+                                                    const totalM = iosCount + andCount;
+                                                    const total = totalD + totalM + linCount;
+                                                    
+                                                    return total > 0 ? Math.round((totalD / total) * 100) : 0;
+                                                })()}
                                                 <span className="text-sm font-normal text-muted-foreground">
                                                     %
                                                 </span>
@@ -434,8 +448,22 @@ export default function Dashboard() {
                                         <div className="grid flex-1 auto-rows-min gap-0.5">
                                             <div className="text-xs text-muted-foreground">Mobiles</div>
                                             <div className="flex items-baseline gap-1 text-2xl font-bold tabular-nums leading-none">
-                                                {Math.round(((reportData.TenantInfo?.DeviceOverview?.ManagedDevices?.mobileCount || 0) /
-                                                    (reportData.TenantInfo?.DeviceOverview?.ManagedDevices?.totalCount || 1)) * 100)}
+                                                {(() => {
+                                                    const desktopNodes = reportData.TenantInfo?.DeviceOverview?.DesktopDevicesSummary?.nodes || [];
+                                                    const mobileNodes = reportData.TenantInfo?.DeviceOverview?.MobileSummary?.nodes || [];
+                                                    
+                                                    const winCount = desktopNodes.find(n => n.source === "Desktop devices" && n.target === "Windows")?.value || 0;
+                                                    const macCount = desktopNodes.find(n => n.source === "Desktop devices" && n.target === "macOS")?.value || 0;
+                                                    const iosCount = mobileNodes.find(n => n.source === "Mobile devices" && n.target === "iOS")?.value || 0;
+                                                    const andCount = mobileNodes.find(n => n.source === "Mobile devices" && n.target === "Android")?.value || 0;
+                                                    const linCount = reportData.TenantInfo?.DeviceOverview?.ManagedDevices?.deviceOperatingSystemSummary?.linuxCount || 0;
+                                                    
+                                                    const totalD = winCount + macCount;
+                                                    const totalM = iosCount + andCount;
+                                                    const total = totalD + totalM + linCount;
+                                                    
+                                                    return total > 0 ? Math.round((totalM / total) * 100) : 0;
+                                                })()}
                                                 <span className="text-sm font-normal text-muted-foreground">
                                                     %
                                                 </span>

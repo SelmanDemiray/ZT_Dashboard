@@ -32,12 +32,12 @@ export function TrendsFilterBar({
             {/* Resource Group */}
             <TrendsSelect
                 label="Resource Group"
-                value={filters.resourceGroupId}
+                value={filters.resourceGroupId || 'all'}
                 options={[
-                    { value: '', label: 'All' },
+                    { value: 'all', label: 'All' },
                     ...resourceGroups.map((rg) => ({ value: rg, label: rg })),
                 ]}
-                onChange={(v) => onUpdate({ resourceGroupId: v })}
+                onChange={(v) => onUpdate({ resourceGroupId: v === 'all' ? '' : v })}
             />
 
             {/* Data Source */}
@@ -92,14 +92,14 @@ export function TrendsFilterBar({
             {/* Compare */}
             <TrendsSelect
                 label="Compare"
-                value={filters.compareSubscriptionId}
+                value={filters.compareSubscriptionId || 'none'}
                 options={[
-                    { value: '', label: 'None' },
+                    { value: 'none', label: 'None' },
                     ...subscriptions
                         .filter((s) => s.id !== filters.subscriptionId)
                         .map((s) => ({ value: s.id, label: s.name })),
                 ]}
-                onChange={(v) => onUpdate({ compareSubscriptionId: v })}
+                onChange={(v) => onUpdate({ compareSubscriptionId: v === 'none' ? '' : v })}
             />
         </div>
     );
