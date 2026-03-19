@@ -538,7 +538,7 @@ $finalData = [ordered]@{
 
 # FIX #5: Blob path includes tenant ID prefix — frontend must use the same path.
 # Full blob URL: https://<storage>.blob.core.windows.net/<container>/<tenantId>/policy-mapping.json
-$blobMapPath = "$targetTenantId/policy-mapping.json"
+$blobMapPath = "assessments/$targetTenantId/policy-mapping.json"
 Write-Log "Uploading policy mapping --> container='$containerName'  path='$blobMapPath'"
 
 try {
