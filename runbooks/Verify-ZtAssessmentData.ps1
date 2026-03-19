@@ -3,9 +3,6 @@ param()
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 $InformationPreference = "Continue"
-$today = (Get-Date).ToString("yyyy-MM-dd")
-
-$script:ErrorLog = [System.Collections.ArrayList]::new()
 
 function Write-Log {
     param(
@@ -13,18 +10,46 @@ function Write-Log {
         [ValidateSet("INFO","WARN","ERROR","DEBUG")]
         [string]$Level = "INFO"
     )
-    $ts = (Get-Date).ToString("HH:mm:ss")
+    $ts = (Get-Date).ToString("yyyy-MM-dd HH:mm:ss")
     Write-Host "[$ts][$Level] $Message"
 }
 
-# Module-level storage cache
+$today = (Get-Date).ToString("yyyy-MM-dd")
+$dateString = (Get-Date).ToString("yyyy-MM-dd HH:mm:ss")
+$script:ErrorLog = [System.Collections.ArrayList]::new()
+
+# ─── Hybrid Worker Environment Setup ──────────────────────────────────────────
+$standardPaths = @(
+    "C:\ProgramData\ZtModules",
+    "C:\Program Files\PowerShell\Modules",
+    "C:\Program Files\WindowsPowerShell\Modules"
+)
+foreach ($sp in $standardPaths) {
+    if ((Test-Path $sp) -and ($env:PSModulePath -notmatch [regex]::Escape($sp))) {
+        $env:PSModulePath = "$sp;$env:PSModulePath"
+    }
+}
+
+# ─── Module Validation ────────────────────────────────────────────────────────
+$requiredModules = @("Az.Accounts", "Az.ResourceGraph")
+foreach ($mod in $requiredModules) {
+    if (-not (Get-Module -Name $mod -ListAvailable)) {
+        Write-Log "Required module $mod is not found. Attempting to import..." "WARN"
+        Import-Module $mod -ErrorAction SilentlyContinue
+    }
+    else {
+        Import-Module $mod -ErrorAction SilentlyContinue
+    }
+}
+
+# ─── Storage Token / Blob Helpers ──────────────────────────────────────────────
 $script:StorageBearerToken      = $null
 $script:StorageTokenExpiry      = [int64]0
 $script:StorageAccountNameCache = $null
 
 function Get-StorageAccessToken {
     if (-not [string]::IsNullOrWhiteSpace($script:uamiClientId)) {
-        # UAMI path: raw IMDS call, no SDK involvement
+        # UAMI path
         $uri = "http://169.254.169.254/metadata/identity/oauth2/token?api-version=2018-02-01&resource=$([uri]::EscapeDataString('https://storage.azure.com/'))&client_id=$([uri]::EscapeDataString($script:uamiClientId))"
         $oldProxy = [System.Net.WebRequest]::DefaultWebProxy
         [System.Net.WebRequest]::DefaultWebProxy = $null
@@ -38,20 +63,14 @@ function Get-StorageAccessToken {
             [System.Net.WebRequest]::DefaultWebProxy = $oldProxy
         }
 
-        return @{
-            access_token = [string]$t.access_token
-            expires_on   = [string]$t.expires_on
-        }
+        return @{ access_token = [string]$t.access_token; expires_on = [string]$t.expires_on }
     }
     else {
         # AppRegistration path
         $secTok   = Get-AzAccessToken -ResourceUrl "https://storage.azure.com/" -AsSecureString -ErrorAction Stop
         $plain    = [System.Net.NetworkCredential]::new('', $secTok.Token).Password
         $expEpoch = $secTok.ExpiresOn.ToUnixTimeSeconds().ToString()
-        return @{
-            access_token = $plain
-            expires_on   = $expEpoch
-        }
+        return @{ access_token = $plain; expires_on = $expEpoch }
     }
 }
 
@@ -62,7 +81,7 @@ function Ensure-StorageTokenFresh {
         $t = Get-StorageAccessToken
         $script:StorageBearerToken = [string]$t.access_token
         $script:StorageTokenExpiry = [int64]$t.expires_on
-        Write-Log "Token refreshed."
+        Write-Log "Storage token refreshed."
     }
 }
 
@@ -125,19 +144,51 @@ function Upload-JsonBlob {
     }
 }
 
+function Ensure-AzSessionFresh {
+    param([int]$RefreshIfExpiringInMinutes = 10)
+    try {
+        $tok = Get-AzAccessToken -ResourceUrl "https://management.azure.com/" -ErrorAction Stop
+        $minsLeft = ($tok.ExpiresOn.UtcDateTime - (Get-Date).ToUniversalTime()).TotalMinutes
+        if ($minsLeft -le $RefreshIfExpiringInMinutes) {
+            Write-Log "Az token expiring soon -- reconnecting..." "WARN"
+            Connect-AzAccount -Identity -AccountId $script:uamiClientId -Tenant $targetTenantId -Force | Out-Null
+        }
+    } catch {
+        Write-Log "Could not validate Az session -- forcing reconnect: $_" "WARN"
+        Connect-AzAccount -Identity -AccountId $script:uamiClientId -Tenant $targetTenantId -Force | Out-Null
+    }
+}
+
+
+# ─── Auth Initialization ───────────────────────────────────────────────────────
 Write-Log "--- Initialization & Auth ---"
 $authMethod = Get-AutomationVariable -Name "AuthMethod" -ErrorAction SilentlyContinue
 if (-not $authMethod) { $authMethod = "ManagedIdentity" }
-$storageAccountName = Get-AutomationVariable -Name "StorageAccountName" -ErrorAction Stop
-$containerName      = Get-AutomationVariable -Name "BlobContainerName"  -ErrorAction Stop
-$targetTenantId     = Get-AutomationVariable -Name "TargetTenantId"     -ErrorAction Stop
+
+try {
+    $script:StorageAccountNameCache = Get-AutomationVariable -Name "StorageAccountName" -ErrorAction Stop
+    $containerName      = Get-AutomationVariable -Name "BlobContainerName"  -ErrorAction Stop
+    $targetTenantId     = Get-AutomationVariable -Name "TargetTenantId"     -ErrorAction Stop
+} catch {
+    Write-Log "Required Automation Variables (Storage/TargetTenant) are missing: $_" "ERROR"
+    throw
+}
 
 $script:uamiClientId = $null
 
+# Clear inherited MSI/IDENTITY env vars for automation accounts
+$msiEnvVars = @('IDENTITY_ENDPOINT','IDENTITY_HEADER','MSI_ENDPOINT','MSI_SECRET')
+foreach ($v in $msiEnvVars) {
+    [System.Environment]::SetEnvironmentVariable($v, $null)
+}
+# Clear stale Az contexts
+try { Disable-AzContextAutosave -Scope Process | Out-Null } catch {}
+try { Disconnect-AzAccount -Scope Process -ErrorAction SilentlyContinue | Out-Null } catch {}
+try { Clear-AzContext -Scope Process -Force -ErrorAction SilentlyContinue } catch {}
+try { Clear-AzContext -Scope CurrentUser -Force -ErrorAction SilentlyContinue } catch {}
+
 if ($authMethod -eq 'ManagedIdentity') {
     $script:uamiClientId = Get-AutomationVariable -Name "UserAssignedManagedIdentityClientId" -ErrorAction Stop
-    $msiEnvVars = @('IDENTITY_ENDPOINT','IDENTITY_HEADER','MSI_ENDPOINT','MSI_SECRET')
-    foreach ($v in $msiEnvVars) { [System.Environment]::SetEnvironmentVariable($v, $null) }
 
     Write-Log "Logging in via Managed Identity..."
     Connect-AzAccount -Identity -AccountId $script:uamiClientId -Tenant $targetTenantId -Force | Out-Null
@@ -154,144 +205,269 @@ else {
     Connect-MgGraph -ClientSecretCredential $cred -TenantId $targetTenantId -NoWelcome -ContextScope Process | Out-Null
 }
 
-$script:StorageAccountNameCache = $storageAccountName
+try {
+    Ensure-AzSessionFresh
+} catch {
+    Write-Log "Connect-AzAccount validation failed: $_" "ERROR"
+    throw
+}
 
-Write-Log "--- Verifying Azure Assessment Data ---"
 
-# We read the master assessment report from Blob
+# ───────────────────────────────────────────────────────────────────────────────
+# PART 1: VERIFY ZT ASSESSMENT DATA (Graph App-Only Data Fixes)
+# ───────────────────────────────────────────────────────────────────────────────
+Write-Log "--- PART 1: Verifying Azure Assessment Data Missing Endpoints ---"
+
 $reportPath = "assessments/report-data.json"
 Write-Log "Downloading $reportPath..."
 $reportData = Download-JsonBlob -BlobPath $reportPath -Container $containerName
 
-if (-not $reportData) {
-    Write-Log "Could not read $reportPath from storage container $containerName. Exiting." "ERROR"
-    exit
+if (-not $reportData -or -not $reportData.TenantInfo) {
+    Write-Log "Report data missing or invalid format. Skipping Graph App-Only fixes." "WARN"
 }
+else {
+    $missingLog = @()
+    $dataUpdated = $false
 
-if (-not $reportData.TenantInfo) {
-    Write-Log "Report data does not contain a TenantInfo section. Exiting." "ERROR"
-    exit
-}
+    $endpointsToCheck = @(
+        @{Key = "ConfigWindowsEnrollment";Endpoint = "https://graph.microsoft.com/beta/policies/mobileDeviceManagementPolicies";Method = "GET"},
+        @{Key = "DeviceEnrollmentRestriction";Endpoint = "https://graph.microsoft.com/beta/deviceManagement/deviceEnrollmentConfigurations";Method = "GET"},
+        @{Key = "DeviceCompliancePolicies";Endpoint = "https://graph.microsoft.com/beta/deviceManagement/deviceCompliancePolicies";Method = "GET"},
+        @{Key = "DeviceAppProtectionPolicies";Endpoint = "https://graph.microsoft.com/beta/deviceAppManagement/managedAppPolicies";Method = "GET"}
+    )
 
-$missingLog = @()
-$dateString = (Get-Date).ToString("yyyy-MM-dd HH:mm:ss")
-$dataUpdated = $false
+    foreach ($item in $endpointsToCheck) {
+        $propName = $item.Key
+        $endpoint = $item.Endpoint
 
-# Identify target fallback endpoints to check if data is completely empty/missing
-$endpointsToCheck = @(
-    @{
-        Key      = "ConfigWindowsEnrollment"
-        Endpoint = "https://graph.microsoft.com/beta/policies/mobileDeviceManagementPolicies"
-        Method   = "GET"
-    },
-    @{
-        Key      = "DeviceEnrollmentRestriction"
-        Endpoint = "https://graph.microsoft.com/beta/deviceManagement/deviceEnrollmentConfigurations"
-        Method   = "GET"
-    },
-    @{
-        Key      = "DeviceCompliancePolicies"
-        Endpoint = "https://graph.microsoft.com/beta/deviceManagement/deviceCompliancePolicies"
-        Method   = "GET"
-    },
-    @{
-        Key      = "DeviceAppProtectionPolicies"
-        Endpoint = "https://graph.microsoft.com/beta/deviceAppManagement/managedAppPolicies"
-        Method   = "GET"
-    }
-)
+        $existingData = $null
+        if ($reportData.TenantInfo.PSObject.Properties.Match($propName).Count -gt 0) {
+            $existingData = $reportData.TenantInfo.$propName
+        }
 
-foreach ($item in $endpointsToCheck) {
-    $propName = $item.Key
-    $endpoint = $item.Endpoint
+        $isEmpty = $false
+        if ($null -eq $existingData) { 
+            $isEmpty = $true 
+        } 
+        elseif ($existingData -is [string] -and [string]::IsNullOrWhiteSpace($existingData)) {
+            $isEmpty = $true
+        }
+        elseif ($existingData -is [System.Array] -or $existingData -is [System.Collections.ICollection]) {
+            if ($existingData.Count -eq 0) { $isEmpty = $true }
+        }
+        elseif ($existingData -is [System.Management.Automation.PSCustomObject]) {
+            if (@($existingData.PSObject.Properties).Count -eq 0) { $isEmpty = $true }
+        }
+        # Fallback for empty strings masquerading as objects or properties
+        elseif ([string]::IsNullOrWhiteSpace($existingData.ToString())) {
+            $isEmpty = $true
+        }
 
-    # Check if data exists in the report
-    $existingData = $null
-    if ($reportData.TenantInfo.PSObject.Properties.Match($propName).Count -gt 0) {
-        $existingData = $reportData.TenantInfo.$propName
-    }
-
-    $isEmpty = $false
-    if ($null -eq $existingData) {
-        $isEmpty = $true
-    } elseif ($existingData -is [System.Collections.IEnumerable] -and $existingData.Count -eq 0) {
-        $isEmpty = $true
-    }
-
-    if ($isEmpty) {
-        Write-Log "Data missing for '$propName'. Preparing to fetch via app-only auth endpoint..." "WARN"
-        try {
-            Write-Log " -> Calling GET $endpoint"
-            $resp = Invoke-MgGraphRequest -Uri $endpoint -Method GET -ErrorAction Stop
-            
-            # Check if valid data came back
-            if ($resp.value -and $resp.value.Count -gt 0) {
-                Write-Log " -> Successfully retrieved data! Populating $propName..."
-                if ($reportData.TenantInfo.PSObject.Properties.Match($propName).Count -eq 0) {
-                    $reportData.TenantInfo | Add-Member -MemberType NoteProperty -Name $propName -Value $resp.value
+        if ($isEmpty) {
+            Write-Log "Data missing for '$propName'. Preparing to fetch via app-only auth endpoint..." "WARN"
+            try {
+                $resp = Invoke-MgGraphRequest -Uri $endpoint -Method GET -ErrorAction Stop
+                
+                if ($resp.value -and $resp.value.Count -gt 0) {
+                    Write-Log " -> Successfully retrieved data! Populating $propName..."
+                    if ($reportData.TenantInfo.PSObject.Properties.Match($propName).Count -eq 0) {
+                        $reportData.TenantInfo | Add-Member -MemberType NoteProperty -Name $propName -Value $resp.value
+                    } else {
+                        $reportData.TenantInfo.$propName = $resp.value
+                    }
+                    $dataUpdated = $true
                 } else {
-                    $reportData.TenantInfo.$propName = $resp.value
-                }
-                $dataUpdated = $true
-            } else {
-                Write-Log " -> API call succeeded but returned empty data." "WARN"
-                $missingLog += [ordered]@{
-                    Timestamp = $dateString
-                    Component = $propName
-                    Endpoint  = $endpoint
-                    Error     = "API returned successful HTTP response but empty data array."
-                    Severity  = "INFO"
+                    Write-Log " -> API call succeeded but returned empty data." "WARN"
+                    $missingLog += [ordered]@{
+                        Timestamp = $dateString; Component = $propName; Endpoint = $endpoint
+                        Error = "API returned successful HTTP response but empty data array."
+                    }
                 }
             }
-        }
-        catch {
-            $msg = $_.Exception.Message
-            Write-Log " -> Call failed: $msg" "ERROR"
-            $missingLog += [ordered]@{
-                Timestamp = $dateString
-                Component = $propName
-                Endpoint  = $endpoint
-                Error     = $msg
-                Severity  = "ERROR"
+            catch {
+                $msg = $_.Exception.Message
+                Write-Log " -> Call failed: $msg" "ERROR"
+                $missingLog += [ordered]@{ Timestamp = $dateString; Component = $propName; Endpoint = $endpoint; Error = $msg }
             }
+        } else {
+            Write-Log "Data exists for '$propName'. Skipping."
         }
-    } else {
-        Write-Log "Data exists for '$propName'. Skipping to avoid overwriting successful pulls."
+    }
+
+    if ($missingLog.Count -gt 0) {
+        Write-Log "Saving Missing Endpoints Report to /verification/logs..."
+        $missingReportPath = "assessments/verification/logs/$today/missing-endpoints.json"
+        
+        $missingReportData = [ordered]@{ RunDate = $today; Timestamp = $dateString; MissingEndpoints = $missingLog }
+        
+        $existingLog = Download-JsonBlob -BlobPath $missingReportPath -Container $containerName
+        if ($existingLog -and $existingLog.MissingEndpoints) {
+            $missingReportData.MissingEndpoints = @($existingLog.MissingEndpoints) + @($missingReportData.MissingEndpoints)
+        }
+        Upload-JsonBlob -BlobPath $missingReportPath -Data $missingReportData -Container $containerName
+    }
+
+    if ($dataUpdated) {
+        Write-Log "Uploading Updated Report Data..."
+        Upload-JsonBlob -BlobPath $reportPath -Data $reportData -Container $containerName
+        Write-Log "Successfully updated $reportPath with appended data."
     }
 }
 
-# Process the missing endpoints tracking
-if ($missingLog.Count -gt 0) {
-    Write-Log "--- Saving Missing Endpoints Report to /verification/logs ---"
+
+# ───────────────────────────────────────────────────────────────────────────────
+# PART 2: UPDATE POLICY NAMES MAPPING (ARG Policy Metadata Fetch)
+# ───────────────────────────────────────────────────────────────────────────────
+Write-Log "--- PART 2: Updating Policy Names Mapping ---"
+
+Write-Log "Discovering Azure subscriptions..."
+try {
+    $allSubs = @(Get-AzSubscription -TenantId $targetTenantId -ErrorAction Stop | Where-Object { $_.State -eq 'Enabled' })
+    Write-Log "Found $($allSubs.Count) enabled subscription(s)."
+} catch {
+    Write-Log "Failed to list subscriptions for tenant $targetTenantId. Error: $_" "ERROR"
+    throw
+}
+
+$mapping = [ordered]@{ policies = @{}; policySets = @{} }
+
+Write-Log "Fetching Policy Definitions via Azure Resource Graph..."
+try {
+    Ensure-AzSessionFresh
+    $policyRows = @()
+    $pSkipToken = $null
+    do {
+        $pParams = @{
+            Query       = "policyresources | where type =~ 'microsoft.authorization/policydefinitions' | project id, name, displayName = properties.displayName"
+            First       = 1000
+            ErrorAction = 'Stop'
+        }
+        if ($pSkipToken) { $pParams['SkipToken'] = $pSkipToken }
+        
+        $pResults = Search-AzGraph @pParams
+        $pPage    = @(if ($pResults.PSObject.Properties.Name -contains 'Data') { $pResults.Data } else { $pResults })
+        $policyRows += $pPage
+        
+        $pSkipToken = if ($pResults.PSObject.Properties.Name -contains 'SkipToken') { $pResults.SkipToken } else { $null }
+    } while ($pSkipToken)
     
-    $missingReportPath = "assessments/verification/logs/$today/missing-endpoints.json"
-    $missingReportData = [ordered]@{
-        RunDate = $today
-        Timestamp = $dateString
-        MissingEndpoints = $missingLog
+    foreach ($pol in $policyRows) {
+        $displayName = $pol.displayName.ToString()
+        if (-not [string]::IsNullOrWhiteSpace($displayName)) {
+            $mapping.policies[$pol.name.ToString().ToLower()] = $displayName
+            $mapping.policies[$pol.id.ToString().ToLower()]   = $displayName
+        }
     }
+    Write-Log "Mapped $($mapping.policies.Keys.Count) Policy Definitions."
+} catch {
+    Write-Log "ARG query failed, falling back to Get-AzPolicyDefinition: $_" "WARN"
+    foreach ($sub in $allSubs) {
+        try {
+            Set-AzContext -SubscriptionId $sub.Id -ErrorAction SilentlyContinue | Out-Null
+            $policies = @(Get-AzPolicyDefinition -ErrorAction SilentlyContinue)
+            foreach ($pol in $policies) {
+                $mapping.policies[$pol.Name.ToLower()] = $pol.Properties.DisplayName
+                $mapping.policies[$pol.ResourceId.ToLower()] = $pol.Properties.DisplayName
+            }
+        } catch { }
+    }
+}
+
+Write-Log "Fetching Policy Set Definitions via Azure Resource Graph..."
+try {
+    Ensure-AzSessionFresh
+    $setRows = @()
+    $sSkipToken = $null
+    do {
+        $sParams = @{
+            Query       = "policyresources | where type =~ 'microsoft.authorization/policysetdefinitions' | project id, name, displayName = properties.displayName"
+            First       = 1000
+            ErrorAction = 'Stop'
+        }
+        if ($sSkipToken) { $sParams['SkipToken'] = $sSkipToken }
+        
+        $sResults = Search-AzGraph @sParams
+        $sPage    = @(if ($sResults.PSObject.Properties.Name -contains 'Data') { $sResults.Data } else { $sResults })
+        $setRows += $sPage
+        
+        $sSkipToken = if ($sResults.PSObject.Properties.Name -contains 'SkipToken') { $sResults.SkipToken } else { $null }
+    } while ($sSkipToken)
     
-    # Check if there is an existing log for today and merge to avoid overwriting previous failures
-    $existingLog = Download-JsonBlob -BlobPath $missingReportPath -Container $containerName
-    if ($existingLog -and $existingLog.MissingEndpoints) {
-        Write-Log "Merging with existing missing-endpoints log for today."
-        $mergedArr = @($existingLog.MissingEndpoints) + @($missingReportData.MissingEndpoints)
-        $missingReportData.MissingEndpoints = $mergedArr
+    foreach ($set in $setRows) {
+        $displayName = $set.displayName.ToString()
+        if (-not [string]::IsNullOrWhiteSpace($displayName)) {
+            $mapping.policySets[$set.name.ToString().ToLower()] = $displayName
+            $mapping.policySets[$set.id.ToString().ToLower()]   = $displayName
+        }
     }
-
-    Upload-JsonBlob -BlobPath $missingReportPath -Data $missingReportData -Container $containerName
-    Write-Log "Missing endpoints report uploaded successfully."
-} else {
-    Write-Log "No missing endpoint errors encountered during app-only sync."
+    Write-Log "Mapped $($mapping.policySets.Keys.Count) Policy Sets."
+} catch {
+    Write-Log "ARG query for sets failed, falling back to Get-AzPolicySetDefinition: $_" "WARN"
+    foreach ($sub in $allSubs) {
+        try {
+            Set-AzContext -SubscriptionId $sub.Id -ErrorAction SilentlyContinue | Out-Null
+            $sets = Get-AzPolicySetDefinition -ErrorAction SilentlyContinue
+            foreach ($set in $sets) {
+                $mapping.policySets[$set.Name.ToLower()] = $set.Properties.DisplayName
+                $mapping.policySets[$set.ResourceId.ToLower()] = $set.Properties.DisplayName
+            }
+        } catch { }
+    }
 }
 
-# Update the main assessment data if changes were made
-if ($dataUpdated) {
-    Write-Log "--- Uploading Updated Report Data ---"
-    Upload-JsonBlob -BlobPath $reportPath -Data $reportData -Container $containerName
-    Write-Log "Successfully updated $reportPath with appended data."
-} else {
-    Write-Log "No new data was appended. $reportPath remains unchanged."
+Write-Log "Fetching Built-in Policies and Policy Sets..."
+try {
+    $builtInPolicies = Get-AzPolicyDefinition -Builtin -ErrorAction SilentlyContinue
+    foreach ($pol in $builtInPolicies) {
+        $mapping.policies[$pol.Name.ToLower()] = $pol.Properties.DisplayName
+        $mapping.policies[$pol.ResourceId.ToLower()] = $pol.Properties.DisplayName
+    }
+    $builtInSets = Get-AzPolicySetDefinition -Builtin -ErrorAction SilentlyContinue
+    foreach ($set in $builtInSets) {
+        $mapping.policySets[$set.Name.ToLower()] = $set.Properties.DisplayName
+        $mapping.policySets[$set.ResourceId.ToLower()] = $set.Properties.DisplayName
+    }
+} catch { }
+
+Write-Log "Fetching Custom Policies and Policy Sets from Management Groups..."
+try {
+    # Management Group fallback checks often error silently when access is denied. 
+    # Use SilentlyContinue to suppress noisy console output.
+    $mgs = Get-AzManagementGroup -ErrorAction SilentlyContinue
+    foreach ($mg in $mgs) {
+        try {
+            $mgPolicies = Get-AzPolicyDefinition -ManagementGroupName $mg.Name -Custom -ErrorAction SilentlyContinue
+            foreach ($pol in $mgPolicies) {
+                $mapping.policies[$pol.Name.ToLower()] = $pol.Properties.DisplayName
+                $mapping.policies[$pol.ResourceId.ToLower()] = $pol.Properties.DisplayName
+            }
+            $mgSets = Get-AzPolicySetDefinition -ManagementGroupName $mg.Name -Custom -ErrorAction SilentlyContinue
+            foreach ($set in $mgSets) {
+                $mapping.policySets[$set.Name.ToLower()] = $set.Properties.DisplayName
+                $mapping.policySets[$set.ResourceId.ToLower()] = $set.Properties.DisplayName
+            }
+        } catch {}
+    }
+} catch { }
+
+# Flat mapping for frontend lookup
+$flatMapping = @{}
+foreach ($key in $mapping.policies.Keys) { $flatMapping[$key] = $mapping.policies[$key] }
+foreach ($key in $mapping.policySets.Keys) { $flatMapping[$key] = $mapping.policySets[$key] }
+
+$finalData = @{
+    lastUpdated = (Get-Date).ToString("o")
+    mapping = $flatMapping
 }
 
-Write-Log "=== Runbook Complete ==="
+$blobMapPath = "$targetTenantId/policy-mapping.json"
+Write-Log "Uploading policy mapping to $blobMapPath"
+try {
+    Upload-JsonBlob -BlobPath $blobMapPath -Data $finalData -Container $containerName
+    Write-Log "Policy mapping generated successfully."
+} catch {
+    Write-Log "Failed to upload blob: $_" "ERROR"
+    throw
+}
+
+Write-Log "=== Unified Verification Runbook Complete ==="
