@@ -150,7 +150,7 @@ try {
 }
 
 Write-Log "Discovering subscriptions..."
-$allSubs = Get-AzSubscription -TenantId $targetTenantId | Where-Object { $_.State -eq 'Enabled' }
+$allSubs = @(Get-AzSubscription -TenantId $targetTenantId -ErrorAction Stop | Where-Object { $_.State -eq 'Enabled' })
 Write-Log "Found $($allSubs.Count) enabled subscription(s)."
 
 $mapping = [ordered]@{
