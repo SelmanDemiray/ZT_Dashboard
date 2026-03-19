@@ -149,8 +149,18 @@ try {
     throw
 }
 
-Write-Log "Discovering subscriptions..."
-$allSubs = @(Get-AzSubscription -TenantId $targetTenantId -ErrorAction Stop | Where-Object { $_.State -eq 'Enabled' })
+if ([string]::IsNullOrWhiteSpace($targetTenantId)) {
+    Write-Log "Tenant ID variable is missing or empty. Cannot discover subscriptions." "ERROR"
+    throw "TargetTenantId is required for subscription discovery."
+}
+
+Write-Log "Discovering subscriptions for tenant $targetTenantId..."
+try {
+    $allSubs = @(Get-AzSubscription -TenantId $targetTenantId -ErrorAction Stop | Where-Object { $_.State -eq 'Enabled' })
+} catch {
+    Write-Log "Failed to list subscriptions for tenant $targetTenantId. Error: $_" "ERROR"
+    throw
+}
 Write-Log "Found $($allSubs.Count) enabled subscription(s)."
 
 $mapping = [ordered]@{
