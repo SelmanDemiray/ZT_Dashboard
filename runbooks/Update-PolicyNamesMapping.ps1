@@ -145,6 +145,10 @@ try {
     throw
 }
 
+Write-Log "Discovering subscriptions..."
+$allSubs = Get-AzSubscription -TenantId $targetTenantId | Where-Object { $_.State -eq 'Enabled' }
+Write-Log "Found $($allSubs.Count) enabled subscription(s)."
+
 $mapping = [ordered]@{
     policies = @{}
     policySets = @{}
@@ -171,12 +175,19 @@ try {
     Write-Log "Mapped $($mapping.policies.Keys.Count) Policy Definitions."
 } catch {
     # Fallback to Get-AzPolicyDefinition if ARG fails/is not available
-    Write-Log "ARG query failed, falling back to Get-AzPolicyDefinition: $_" "WARN"
-    $policies = Get-AzPolicyDefinition
-    foreach ($pol in $policies) {
-        $policyId = $pol.Name.ToLower()
-        $mapping.policies[$policyId] = $pol.Properties.DisplayName
-        $mapping.policies[$pol.ResourceId.ToLower()] = $pol.Properties.DisplayName
+    Write-Log "ARG query failed, falling back to Get-AzPolicyDefinition (looping all subscriptions): $_" "WARN"
+    foreach ($sub in $allSubs) {
+        try {
+            Set-AzContext -SubscriptionId $sub.Id -ErrorAction SilentlyContinue | Out-Null
+            $policies = Get-AzPolicyDefinition -ErrorAction SilentlyContinue
+            foreach ($pol in $policies) {
+                $policyId = $pol.Name.ToLower()
+                $mapping.policies[$policyId] = $pol.Properties.DisplayName
+                $mapping.policies[$pol.ResourceId.ToLower()] = $pol.Properties.DisplayName
+            }
+        } catch {
+            Write-Log "Failed to fetch policies for subscription $($sub.Name)" "WARN"
+        }
     }
 }
 
@@ -195,12 +206,19 @@ try {
     }
     Write-Log "Mapped $($mapping.policySets.Keys.Count) Policy Sets."
 } catch {
-    Write-Log "ARG query for sets failed, falling back to Get-AzPolicySetDefinition: $_" "WARN"
-    $sets = Get-AzPolicySetDefinition
-    foreach ($set in $sets) {
-        $setId = $set.Name.ToLower()
-        $mapping.policySets[$setId] = $set.Properties.DisplayName
-        $mapping.policySets[$set.ResourceId.ToLower()] = $set.Properties.DisplayName
+    Write-Log "ARG query for sets failed, falling back to Get-AzPolicySetDefinition (looping all subscriptions): $_" "WARN"
+    foreach ($sub in $allSubs) {
+        try {
+            Set-AzContext -SubscriptionId $sub.Id -ErrorAction SilentlyContinue | Out-Null
+            $sets = Get-AzPolicySetDefinition -ErrorAction SilentlyContinue
+            foreach ($set in $sets) {
+                $setId = $set.Name.ToLower()
+                $mapping.policySets[$setId] = $set.Properties.DisplayName
+                $mapping.policySets[$set.ResourceId.ToLower()] = $set.Properties.DisplayName
+            }
+        } catch {
+            Write-Log "Failed to fetch policy sets for subscription $($sub.Name)" "WARN"
+        }
     }
 }
 
