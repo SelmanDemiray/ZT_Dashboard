@@ -4,7 +4,7 @@ import { cn } from "@/lib/utils";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 import { Icons } from "@/components/icons";
 import { ztAppConfig } from "@/config/app";
-import { reportData } from "@/config/report-data";
+import { useGlobalFilters } from "@/contexts/GlobalFilterContext";
 import { Button, buttonVariants } from "@/components/ui/button";
 import {
     DropdownMenu,
@@ -25,7 +25,7 @@ import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/
 export function Header() {
     const [open, setOpen] = useState(false)
     const location = useLocation();
-    console.log(reportData);
+    const { reportData } = useGlobalFilters();
     return (
         <header className="supports-backdrop-blur:bg-background/60 sticky top-0 z-50 w-full border-b bg-background/90 backdrop-blur">
             <div className="container px-4 md:px-8 flex h-14 items-center">

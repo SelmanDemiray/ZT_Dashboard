@@ -1,6 +1,9 @@
 import { createContext, useContext, useReducer, useEffect, useCallback, type ReactNode } from 'react';
 import type { GlobalFilterState, TenantIndex, TenantEntry, TenantSubscription } from '@/types/assessment';
+import type { ZeroTrustAssessmentReport } from '@/config/report-data';
+import { reportData as staticReportData } from '@/config/report-data';
 import { fetchTenantIndex } from '@/services/blobService';
+import { fetchReportData } from '@/services/reportDataService';
 
 // ─── Context shape ────────────────────────────────────────────────────
 
@@ -8,6 +11,9 @@ interface GlobalFilterContextValue {
     filters: GlobalFilterState;
     tenantIndex: TenantIndex | null;
     loading: boolean;
+    /** Live report data from blob (falls back to static demo data if fetch fails). */
+    reportData: ZeroTrustAssessmentReport;
+    reportLoading: boolean;
     dispatch: React.Dispatch<FilterAction>;
     availableTenants: TenantEntry[];
     availableSubscriptions: TenantSubscription[];
@@ -84,14 +90,23 @@ export function GlobalFilterProvider({ children }: { children: ReactNode }) {
     const [filters, dispatch] = useReducer(filterReducer, defaultFilters);
     const [tenantIndex, setTenantIndex] = useReducerState<TenantIndex | null>(null);
     const [loading, setLoading] = useReducerState<boolean>(true);
+    const [liveReportData, setLiveReportData] = useReducerState<ZeroTrustAssessmentReport>(staticReportData);
+    const [reportLoading, setReportLoading] = useReducerState<boolean>(true);
 
     useEffect(() => {
         let cancelled = false;
-        fetchTenantIndex()
-            .then((data) => {
-                if (cancelled) return;
+
+        // Fetch both tenant-index and report-data in parallel
+        Promise.allSettled([
+            fetchTenantIndex(),
+            fetchReportData(),
+        ]).then(([indexResult, reportResult]) => {
+            if (cancelled) return;
+
+            // Handle tenant index
+            if (indexResult.status === 'fulfilled') {
+                const data = indexResult.value;
                 setTenantIndex(data);
-                // Auto-select first tenant and subscription
                 if (data.tenants.length > 0) {
                     dispatch({ type: 'SET_TENANT', tenantId: data.tenants[0].id });
                     if (data.tenants[0].subscriptions.length > 0) {
@@ -101,13 +116,22 @@ export function GlobalFilterProvider({ children }: { children: ReactNode }) {
                         });
                     }
                 }
-            })
-            .catch((err) => {
-                console.error('Failed to fetch tenant index:', err);
-            })
-            .finally(() => {
-                if (!cancelled) setLoading(false);
-            });
+            } else {
+                console.error('Failed to fetch tenant index:', indexResult.reason);
+            }
+
+            // Handle report data — fall back to static demo data on error
+            if (reportResult.status === 'fulfilled') {
+                setLiveReportData(reportResult.value);
+            } else {
+                console.warn('Failed to fetch live report-data.json, using static fallback:', reportResult.reason);
+            }
+        }).finally(() => {
+            if (!cancelled) {
+                setLoading(false);
+                setReportLoading(false);
+            }
+        });
 
         return () => {
             cancelled = true;
@@ -133,6 +157,8 @@ export function GlobalFilterProvider({ children }: { children: ReactNode }) {
         filters,
         tenantIndex,
         loading,
+        reportData: liveReportData,
+        reportLoading,
         dispatch,
         availableTenants,
         availableSubscriptions,

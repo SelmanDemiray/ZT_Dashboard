@@ -51,7 +51,7 @@ import {
     TooltipTrigger,
 } from "@/components/ui/tooltip"
 // import { Separator } from "@/components/ui/separator"
-import { reportData } from "@/config/report-data";
+import { useGlobalFilters } from "@/contexts/GlobalFilterContext";
 import { CaSankey } from "@/components/overview/ca-sankey";
 import { CaDeviceSankey } from "@/components/overview/caDevice-sankey";
 import { AuthMethodSankey } from "@/components/overview/authMethod-sankey";
@@ -62,7 +62,7 @@ import { formatNumber, metricDescriptions } from "@/lib/format-utils";
 import { OverviewCards } from "@/components/overview-cards";
 
 export default function Dashboard() {
-
+    const { reportData } = useGlobalFilters();
 
     return (
         <TooltipProvider delayDuration={200}>

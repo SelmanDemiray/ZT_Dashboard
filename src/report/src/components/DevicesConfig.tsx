@@ -1,7 +1,8 @@
-import { reportData } from "@/config/report-data";
+import { useGlobalFilters } from "@/contexts/GlobalFilterContext";
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/components/ui/table";
 
 export default function DevicesConfig() {
+    const { reportData } = useGlobalFilters();
     const enrollment = reportData.TenantInfo?.ConfigWindowsEnrollment;
     const enrollmentRestrictions = reportData.TenantInfo?.ConfigDeviceEnrollmentRestriction;
     const compliancePolicies = reportData.TenantInfo?.ConfigDeviceCompliancePolicies;

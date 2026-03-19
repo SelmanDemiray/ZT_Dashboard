@@ -1,9 +1,10 @@
 import { Icons } from "../icons";
-import { reportData } from "@/config/report-data";
+import { useGlobalFilters } from "@/contexts/GlobalFilterContext";
 // import { ztAppConfig } from "@/config/app";
 // import { ModeToggle } from "../mode-toggle";
 
 export function Footer() {
+    const { reportData } = useGlobalFilters();
     // Format the assessment date
     const formatDate = (dateString: string) => {
         try {

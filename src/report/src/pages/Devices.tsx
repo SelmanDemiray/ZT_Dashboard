@@ -1,6 +1,6 @@
 import { PageHeader, PageHeaderHeading } from "@/components/page-header";
 import { DataTable } from "@/components/test-table/data-table";
-import { reportData } from "@/config/report-data";
+import { useGlobalFilters } from "@/contexts/GlobalFilterContext";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { columns } from "@/components/test-table/columns";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -9,6 +9,7 @@ import { BarChart3, Settings } from "lucide-react";
 
 
 export default function Devices() {
+    const { reportData } = useGlobalFilters();
     return (
         <>
             <PageHeader>

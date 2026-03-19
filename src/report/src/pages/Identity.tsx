@@ -1,10 +1,11 @@
 import { PageHeader, PageHeaderHeading } from "@/components/page-header";
 import { DataTable } from "@/components/test-table/data-table";
-import { reportData } from "@/config/report-data";
+import { useGlobalFilters } from "@/contexts/GlobalFilterContext";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { columns } from "@/components/test-table/columns";
 
 export default function Identity() {
+    const { reportData } = useGlobalFilters();
     return (
         <>
             <PageHeader>

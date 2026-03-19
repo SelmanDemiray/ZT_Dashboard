@@ -2,9 +2,10 @@ import { PageHeader, PageHeaderHeading } from "@/components/page-header";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { columns } from "@/components/test-table/columns";
 import { DataTable } from "@/components/test-table/data-table";
-import { reportData } from "@/config/report-data";
+import { useGlobalFilters } from "@/contexts/GlobalFilterContext";
 
 export default function Data() {
+    const { reportData } = useGlobalFilters();
     return (
         <>
             <PageHeader>

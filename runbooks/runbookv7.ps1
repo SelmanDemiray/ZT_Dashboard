@@ -126,6 +126,47 @@ function Get-StorageAccessToken {
     }
 }
 
+# ── Ensure-AzSessionFresh ───────────────────────────────────────────────
+# Validates the current Az ARM token and reconnects the Az session when the
+# token is missing, expired, or close to expiry. This prevents long-running
+# Hybrid Worker runs from hitting ExpiredAuthenticationToken during Stage 7.
+function Ensure-AzSessionFresh {
+    param(
+        [int]$RefreshIfExpiringInMinutes = 10
+    )
+
+    try {
+        $tok = Get-AzAccessToken -ResourceUrl "https://management.azure.com/" -ErrorAction Stop
+        $minsLeft = ($tok.ExpiresOn.UtcDateTime - (Get-Date).ToUniversalTime()).TotalMinutes
+        Write-Log (" [AZ TOKEN] Minutes remaining: {0:N1}" -f $minsLeft)
+
+        if ($minsLeft -le $RefreshIfExpiringInMinutes) {
+            Write-Log " [AZ TOKEN] Token expiring soon -- reconnecting Az session..." "WARN"
+
+            if ($authMethod -eq 'ManagedIdentity') {
+                Connect-AzAccount -Identity -AccountId $uamiClientId -Tenant $targetTenantId -Force | Out-Null
+            }
+            elseif ($authMethod -eq 'AppRegistration') {
+                Connect-AzAccount -ServicePrincipal -Credential $cred -Tenant $targetTenantId -Force | Out-Null
+            }
+
+            Write-Log " [AZ TOKEN] Az session refreshed OK."
+        }
+    }
+    catch {
+        Write-Log " [AZ TOKEN] Could not validate Az session -- forcing reconnect: $($_.Exception.Message)" "WARN"
+
+        if ($authMethod -eq 'ManagedIdentity') {
+            Connect-AzAccount -Identity -AccountId $uamiClientId -Tenant $targetTenantId -Force | Out-Null
+        }
+        elseif ($authMethod -eq 'AppRegistration') {
+            Connect-AzAccount -ServicePrincipal -Credential $cred -Tenant $targetTenantId -Force | Out-Null
+        }
+
+        Write-Log " [AZ TOKEN] Forced Az reconnect succeeded."
+    }
+}
+
 # ── Upload-JsonBlob ───────────────────────────────────────────────────────
 # Serialises $Data to JSON and PUTs it to the Azure Blob REST API.
 # Az.Storage's Set-AzStorageBlobContent is NOT used — it triggered the broken
@@ -913,6 +954,14 @@ $env:AZURE_IDENTITY_DISABLE_MULTITENANTAUTH              = "true"
 $env:AZURE_IDENTITY_DISABLE_VISUALSTUDIOCREDENTIAL       = "true"
 $env:AZURE_IDENTITY_DISABLE_SHAREDTOKENCACHECREDENTIAL   = "true"
 
+# Clear any persisted or inherited Az contexts before authenticating.
+# Hybrid Workers can reuse stale Az context/token caches between runs.
+Write-Log "Disabling Az context autosave and clearing stale Az contexts..."
+try { Disable-AzContextAutosave -Scope Process | Out-Null } catch {}
+try { Disconnect-AzAccount -Scope Process -ErrorAction SilentlyContinue | Out-Null } catch {}
+try { Clear-AzContext -Scope Process -Force -ErrorAction SilentlyContinue } catch {}
+try { Clear-AzContext -Scope CurrentUser -Force -ErrorAction SilentlyContinue } catch {}
+
 if ($authMethod -eq 'ManagedIdentity') {
 
     Write-Log "Auth method : Managed Identity (UAMI on Hybrid Worker VM via IMDS)"
@@ -968,6 +1017,18 @@ if ($authMethod -eq 'ManagedIdentity') {
             -AccountId $uamiClientId `
             -Tenant    $targetTenantId | Out-Null
         Write-Log "Connect-AzAccount (UAMI) -- OK"
+        Write-Log "Validating Az session immediately after Connect-AzAccount..."
+        try {
+            Ensure-AzSessionFresh
+        }
+        catch {
+            Write-DiagnosticError `
+                -Context "Stage 2 -- Az session validation" `
+                -Message "Az login completed but the ARM session is stale or unusable." `
+                -Detail $_.Exception.Message `
+                -Resolution "Clear cached Az contexts on the Hybrid Worker and retry."
+            throw $_
+        }
     }
     catch {
         Write-MiDiagnostic -Code "MI-UAMI-022" -Context "Stage 2 -- Connect-AzAccount" `
@@ -1027,6 +1088,18 @@ elseif ($authMethod -eq 'AppRegistration') {
     try {
         Connect-AzAccount -ServicePrincipal -Credential $cred -Tenant $targetTenantId | Out-Null
         Write-Log "Connect-AzAccount (App Registration) -- OK"
+        Write-Log "Validating Az session immediately after Connect-AzAccount..."
+        try {
+            Ensure-AzSessionFresh
+        }
+        catch {
+            Write-DiagnosticError `
+                -Context "Stage 2 -- Az session validation" `
+                -Message "Az login completed but the ARM session is stale or unusable." `
+                -Detail $_.Exception.Message `
+                -Resolution "Clear cached Az contexts on the Hybrid Worker and retry."
+            throw $_
+        }
     }
     catch {
         Write-DiagnosticError `
@@ -1071,6 +1144,18 @@ else {
 #region ── STAGE 2b: Discover subscriptions ───────────────────────────────
 
 Write-Log "--- STAGE 2b: Discovering Subscriptions ---"
+Write-Log "Refreshing/validating Az session before subscription discovery..."
+try {
+    Ensure-AzSessionFresh
+}
+catch {
+    Write-DiagnosticError `
+        -Context "Stage 2b -- Az session validation" `
+        -Message "Failed to validate Az session before subscription discovery." `
+        -Detail $_.Exception.Message `
+        -Resolution "Clear cached Az contexts on the Hybrid Worker and retry."
+    throw $_
+}
 
 try {
     $allSubs = @(Get-AzSubscription -TenantId $targetTenantId -ErrorAction Stop |
@@ -1079,9 +1164,9 @@ try {
 catch {
     Write-DiagnosticError `
         -Context "Stage 2b -- Get-AzSubscription" `
-        -Message "Failed to list subscriptions -- identity may lack permission." `
+        -Message "Failed to list subscriptions -- identity may lack permission or the Az session may be stale." `
         -Detail $_.Exception.Message `
-        -Resolution "Assign 'Reader' to the identity at Management Group or subscription scope."
+        -Resolution "1. Clear cached Az contexts on the Hybrid Worker. 2. Re-authenticate. 3. If the issue persists, assign 'Reader' to the identity at Management Group or subscription scope."
     throw $_
 }
 
@@ -1409,45 +1494,128 @@ $env:MicrosoftGraphHttpVersion = "HTTP11"
 Write-Log "Overriding Test-ZtContext (app-only auth bypass -- permissions validated in Stage 2c)..."
 function global:Test-ZtContext { return $true }
 
-# ── Inject Resilient Wrapper into Module Scope ───────────────────────────
-# Some specific API calls inside the generic `Add-ZtDeviceWindowsEnrollment`
-# (specifically `Policies/MobileDeviceManagementPolicies`) are Delegated-only
-# endpoints. If called with an App-only token (e.g. from a UAMI or SP), Microsoft
-# Graph rejects them with an unrecoverable 401 Unauthorized.
+# ── Inject App-Only Safe Overrides into Module Scope ─────────────────────
+# Some specific API calls inside the ZeroTrustAssessment tenant-info collectors
+# are not supported with application permissions. In particular,
+# Add-ZtDeviceWindowsEnrollment calls:
+#   GET /beta/policies/mobileDeviceManagementPolicies
+# which is delegated-only. In app-only auth (Managed Identity / Service
+# Principal), Microsoft Graph rejects it and the assessment can fail before
+# writing ZeroTrustAssessmentReport.json.
 #
-# Because powerShell module functions execute inside an isolated SessionState,
-# defining a `global:xyz` function in the runbook does NOT override internal
-# module calls. Instead, we pull the module object and explicitly inject our
-# 401-trapping try/catch wrapper directly into its internal `script:` scope,
-# surgically intercepting just the failing function.
-Write-Log "Injecting resilient Add-ZtDeviceWindowsEnrollment wrapper into ZeroTrustAssessment module scope..."
+# Because module functions run inside the module's own SessionState, a plain
+# global function in the runbook does NOT override internal module calls.
+# We therefore inject replacement functions directly into the module's script:
+# scope. The strategy is:
+#   1) Replace only the delegated-only collector with a no-data implementation.
+#   2) Harden Invoke-ZtTenantInfo so each collector is isolated; if one endpoint
+#      fails, only that dataset is empty while the rest of Stage 4 continues.
+Write-Log "Injecting app-only safe overrides into ZeroTrustAssessment module scope..."
 try {
     $ztModule = Get-Module ZeroTrustAssessment -ErrorAction SilentlyContinue
     if (-not $ztModule) { $ztModule = Import-Module ZeroTrustAssessment -PassThru -ErrorAction Stop }
 
     & $ztModule {
-        # Rename the original function so we can wrap it
-        Rename-Item -Path "Function:\Add-ZtDeviceWindowsEnrollment" -NewName "Add-ZtDeviceWindowsEnrollment_Original" -ErrorAction Stop
+        function script:Invoke-ZtSafeCollector {
+            [CmdletBinding()]
+            param(
+                [Parameter(Mandatory)][string]$Name,
+                [Parameter(Mandatory)][scriptblock]$Action
+            )
 
-        function script:Add-ZtDeviceWindowsEnrollment {
             try {
-                Add-ZtDeviceWindowsEnrollment_Original
+                & $Action
+                Write-PSFMessage -Level Verbose -Message "Collector completed: $Name"
             }
             catch {
                 $msg = $_.Exception.Message
-                if ($msg -match 'Unsupported app.only|Interactive_Required|delegated|401|403') {
-                    Write-PSFMessage -Level Warning -Message "Delegated-only API skipped during app-only execution: Add-ZtDeviceWindowsEnrollment"
+                Write-PSFMessage -Level Warning -Message "Collector failed but assessment will continue: $Name -- $msg" -ErrorRecord $_
+            }
+        }
+
+        function script:Add-ZtDeviceWindowsEnrollment {
+            [CmdletBinding()]
+            param()
+
+            $activity = "Getting Windows enrollment summary"
+            Write-ZtProgress -Activity $activity -Status "Skipped (delegated-only API)"
+
+            Write-PSFMessage -Level Warning -Message (
+                "Skipping Add-ZtDeviceWindowsEnrollment because " +
+                "/policies/mobileDeviceManagementPolicies supports delegated permissions only; " +
+                "application permissions are not supported. Emitting empty dataset so report generation can continue."
+            )
+
+            # Emit a valid empty dataset so the report model remains complete and
+            # front-end consumers receive a consistent shape.
+            Add-ZtTenantInfo -Name "ConfigWindowsEnrollment" -Value @()
+
+            Write-ZtProgress -Activity $activity -Status "Completed"
+        }
+
+        function script:Invoke-ZtTenantInfo {
+            [CmdletBinding()]
+            param(
+                # The database to export the tenant information to.
+                $Database,
+
+                # The Zero Trust pillar to assess. Defaults to All.
+                [ValidateSet('All', 'Identity', 'Devices', 'Network', 'Data')]
+                [string] $Pillar = 'All'
+            )
+
+            Invoke-ZtSafeCollector -Name 'Add-ZtTenantOverview' -Action {
+                Add-ZtTenantOverview
+            }
+
+            if ($Pillar -in ('All', 'Identity')) {
+                Invoke-ZtSafeCollector -Name 'Add-ZtOverviewCaMfa' -Action {
+                    Add-ZtOverviewCaMfa -Database $Database
                 }
-                else {
-                    Write-PSFMessage -Level Warning -Message "Unexpected error in Add-ZtDeviceWindowsEnrollment : $msg" -ErrorRecord $_
+                Invoke-ZtSafeCollector -Name 'Add-ZtOverviewCaDevicesAllUsers' -Action {
+                    Add-ZtOverviewCaDevicesAllUsers -Database $Database
+                }
+                Invoke-ZtSafeCollector -Name 'Add-ZtOverviewAuthMethodsAllUsers' -Action {
+                    Add-ZtOverviewAuthMethodsAllUsers -Database $Database
+                }
+                Invoke-ZtSafeCollector -Name 'Add-ZtOverviewAuthMethodsPrivilegedUsers' -Action {
+                    Add-ZtOverviewAuthMethodsPrivilegedUsers -Database $Database
+                }
+            }
+
+            if ($Pillar -in ('All', 'Devices')) {
+                $IntunePlan = $null
+                try {
+                    $IntunePlan = Get-ZtLicenseInformation -Product Intune
+                }
+                catch {
+                    Write-PSFMessage -Level Warning -Message "Could not determine Intune licensing: $($_.Exception.Message)"
+                }
+
+                if ($null -ne $IntunePlan) {
+                    Invoke-ZtSafeCollector -Name 'Add-ZtDeviceOverview' -Action {
+                        Add-ZtDeviceOverview -Database $Database
+                    }
+                    Invoke-ZtSafeCollector -Name 'Add-ZtDeviceWindowsEnrollment' -Action {
+                        Add-ZtDeviceWindowsEnrollment
+                    }
+                    Invoke-ZtSafeCollector -Name 'Add-ZtDeviceEnrollmentRestriction' -Action {
+                        Add-ZtDeviceEnrollmentRestriction
+                    }
+                    Invoke-ZtSafeCollector -Name 'Add-ZTDeviceCompliancePolicies' -Action {
+                        Add-ZTDeviceCompliancePolicies
+                    }
+                    Invoke-ZtSafeCollector -Name 'Add-ZTDeviceAppProtectionPolicies' -Action {
+                        Add-ZTDeviceAppProtectionPolicies
+                    }
                 }
             }
         }
     }
-    Write-Log "  Module override injected successfully."
+    Write-Log "  Module overrides injected successfully."
 }
 catch {
-    Write-Log "Failed to inject resilient wrapper: $($_.Exception.Message)" "WARN"
+    Write-Log "Failed to inject app-only safe overrides: $($_.Exception.Message)" "WARN"
 }
 
 # ── Ensure MgGraph session is usable before the long-running Invoke-ZtAssessment ──
@@ -1511,6 +1679,21 @@ else {
             -Detail $_.Exception.Message `
             -Severity 'ERROR'
     }
+}
+
+# Refresh Az session after the long-running assessment so later Az cmdlets
+# (Resource Graph, PolicyInsights, Defender, ARM REST) do not inherit a stale
+# ARM token during Stage 7.
+Write-Log "Refreshing Az session after long-running Stage 4..."
+try {
+    Ensure-AzSessionFresh
+}
+catch {
+    Add-ErrorLogEntry -Stage 'Stage 4' -Component 'Az session refresh' `
+        -Message "Failed to refresh Az session after Stage 4." `
+        -Detail $_.Exception.Message `
+        -Resolution "Check Azure authentication on the Hybrid Worker; later Az cmdlets may fail with ExpiredAuthenticationToken." `
+        -Severity 'WARN'
 }
 
 #endregion
@@ -1634,6 +1817,16 @@ catch {
 #region ── STAGE 7: Per-subscription data collection ──────────────────────
 
 Write-Log "--- STAGE 7: Per-Subscription Data Collection ---"
+try {
+    Ensure-AzSessionFresh
+}
+catch {
+    Add-ErrorLogEntry -Stage 'Stage 7' -Component 'Initial Az session refresh' `
+        -Message "Failed to refresh Az session before per-subscription data collection." `
+        -Detail $_.Exception.Message `
+        -Resolution "Check Azure authentication on the Hybrid Worker." `
+        -Severity 'WARN'
+}
 
 if (-not $reportJson) {
     Write-Log "Stage 4 did not produce a report. Skipping Stage 7 (no test data to build snapshots from)." "WARN"
@@ -1646,6 +1839,17 @@ else {
 Write-Log "Processing $($targetSubscriptionIds.Count) subscription(s)..."
 
 foreach ($subId in $targetSubscriptionIds) {
+
+    try {
+        Ensure-AzSessionFresh
+    }
+    catch {
+        Add-ErrorLogEntry -Stage 'Stage 7' -Component "Subscription $subId auth pre-check" `
+            -Message "Failed to refresh Az session before subscription processing." `
+            -Detail $_.Exception.Message `
+            -Resolution "The subscription may fail if the ARM token is expired." `
+            -Severity 'WARN'
+    }
 
     Write-Log "---- Subscription: $subId ----"
   try {
@@ -1733,6 +1937,12 @@ foreach ($subId in $targetSubscriptionIds) {
     #── 7b. Policy Compliance ─────────────────────────────────────────────
 
     Write-Log " [7b] Collecting Policy Compliance data..."
+    try {
+        Ensure-AzSessionFresh
+    }
+    catch {
+        Write-Log " [WARN] Az session refresh before policy collection failed: $($_.Exception.Message)" "WARN"
+    }
     $initiatives = @()
 
     # NOTE: Resource Graph returns at most 1000 rows per call.
@@ -1911,6 +2121,12 @@ PolicyResources
     #── 7c. Defender for Cloud Recommendations ────────────────────────────
 
     Write-Log " [7c] Collecting Defender for Cloud recommendations..."
+    try {
+        Ensure-AzSessionFresh
+    }
+    catch {
+        Write-Log " [WARN] Az session refresh failed before Defender collection: $($_.Exception.Message)" "WARN"
+    }
     $recommendations = @()
     try {
         Set-AzContext -SubscriptionId $subId | Out-Null
@@ -1965,6 +2181,12 @@ PolicyResources
     #── 7d. Governance Rules ───────────────────────────────────────────────
 
     Write-Log " [7d] Collecting Governance Rules..."
+    try {
+        Ensure-AzSessionFresh
+    }
+    catch {
+        Write-Log " [WARN] Az session refresh failed before Governance collection: $($_.Exception.Message)" "WARN"
+    }
     $govRules = @()
     try {
         Set-AzContext -SubscriptionId $subId | Out-Null
