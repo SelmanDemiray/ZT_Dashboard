@@ -17,6 +17,7 @@ import {
     computeDelta,
     detectAnomalies,
 } from '@/lib/trends-utils';
+import { getMappedPolicyName } from '@/lib/policy-mapping';
 import type { RunSnapshot, TrendsFilterState } from '@/types/assessment';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Card, CardContent } from '@/components/ui/card';
@@ -40,6 +41,7 @@ export default function Trends() {
         availableResourceGroups,
         availableDates,
         loading: globalLoading,
+        policyMapping,
     } = useGlobalFilters();
 
     const [trendsFilter, updateTrendsFilter] = useReducer(
@@ -113,21 +115,42 @@ export default function Trends() {
         });
     }, [snapshots, trendsFilter.dateRange]);
 
+    // ─── Apply policy mapping to snapshots before extraction ──────────
+    const mappedSnapshots = useMemo(() => {
+        return filteredSnapshots.map(snap => ({
+            ...snap,
+            policyCompliance: {
+                ...snap.policyCompliance,
+                initiatives: snap.policyCompliance.initiatives.map(init => ({
+                    ...init,
+                    name: getMappedPolicyName(init.id, init.name, policyMapping),
+                    resources: init.resources.map(res => ({
+                        ...res,
+                        failingPolicies: res.failingPolicies.map(fp => ({
+                            ...fp,
+                            name: getMappedPolicyName(fp.id, fp.name, policyMapping)
+                        }))
+                    }))
+                }))
+            }
+        }));
+    }, [filteredSnapshots, policyMapping]);
+
     // ─── Derived trend data ───────────────────────────────────────────
-    const trendData = useMemo(() => extractTrendData(filteredSnapshots), [filteredSnapshots]);
-    const policyComposition = useMemo(() => extractPolicyComposition(filteredSnapshots), [filteredSnapshots]);
-    const defenderSeverity = useMemo(() => extractDefenderSeverity(filteredSnapshots), [filteredSnapshots]);
-    const burnDown = useMemo(() => extractBurnDown(filteredSnapshots), [filteredSnapshots]);
-    const heatmapRows = useMemo(() => extractHeatmapData(filteredSnapshots), [filteredSnapshots]);
-    const heatmapDates = useMemo(() => filteredSnapshots.map((s) => s.date), [filteredSnapshots]);
-    const anomalyAlerts = useMemo(() => detectAnomalies(filteredSnapshots), [filteredSnapshots]);
+    const trendData = useMemo(() => extractTrendData(mappedSnapshots), [mappedSnapshots]);
+    const policyComposition = useMemo(() => extractPolicyComposition(mappedSnapshots), [mappedSnapshots]);
+    const defenderSeverity = useMemo(() => extractDefenderSeverity(mappedSnapshots), [mappedSnapshots]);
+    const burnDown = useMemo(() => extractBurnDown(mappedSnapshots), [mappedSnapshots]);
+    const heatmapRows = useMemo(() => extractHeatmapData(mappedSnapshots), [mappedSnapshots]);
+    const heatmapDates = useMemo(() => mappedSnapshots.map((s) => s.date), [mappedSnapshots]);
+    const anomalyAlerts = useMemo(() => detectAnomalies(mappedSnapshots), [mappedSnapshots]);
 
     const deltaRows = useMemo(() => {
-        if (filteredSnapshots.length < 2) return null;
-        const prev = filteredSnapshots[filteredSnapshots.length - 2];
-        const curr = filteredSnapshots[filteredSnapshots.length - 1];
+        if (mappedSnapshots.length < 2) return null;
+        const prev = mappedSnapshots[mappedSnapshots.length - 2];
+        const curr = mappedSnapshots[mappedSnapshots.length - 1];
         return { date1: prev.date, date2: curr.date, rows: computeDelta(prev, curr) };
-    }, [filteredSnapshots]);
+    }, [mappedSnapshots]);
 
     const handleTrendsUpdate = useCallback(
         (partial: Partial<TrendsFilterState>) => updateTrendsFilter(partial),

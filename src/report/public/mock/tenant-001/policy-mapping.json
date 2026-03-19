@@ -1,0 +1,9 @@
+﻿{
+  "lastUpdated": "2026-03-19T09:31:23.8909732-04:00",
+  "mapping": {
+    "init-1": "Azure Security Benchmark v3",
+    "pol-1": "Storage accounts should restrict network access using virtual network rules",
+    "init-2": "CISA Zero Trust Model",
+    "pol-2": "Require Multi-Factor Authentication for admins"
+  }
+}

@@ -8,6 +8,8 @@ import type { PolicyCompliance, PolicyInitiative, TenantSubscription, RunSnapsho
 import { displaySubName } from '@/lib/format-sub-name';
 import { useShowMore } from '@/hooks/useShowMore';
 import { FilterDropdown } from '@/components/ui/FilterDropdown';
+import { useGlobalFilters } from '@/contexts/GlobalFilterContext';
+import { getMappedPolicyName } from '@/lib/policy-mapping';
 
 interface Props {
     subscriptions: TenantSubscription[];
@@ -32,8 +34,23 @@ export function ComplianceDeepDiveCard({ subscriptions, subDataMap, defaultSubId
     const [expandedInit, setExpandedInit] = useState<string | null>(null);
     const [searchTerm, setSearchTerm] = useState('');
 
+    const { policyMapping } = useGlobalFilters();
+
     const data: PolicyCompliance | null = subDataMap[subId]?.latestSnapshot?.policyCompliance ?? null;
-    const initiatives = useMemo(() => data?.initiatives ?? [], [data?.initiatives]);
+    const initiatives = useMemo(() => {
+        const raw = data?.initiatives ?? [];
+        return raw.map(init => ({
+            ...init,
+            name: getMappedPolicyName(init.id, init.name, policyMapping),
+            resources: init.resources.map(res => ({
+                ...res,
+                failingPolicies: res.failingPolicies.map(fp => ({
+                    ...fp,
+                    name: getMappedPolicyName(fp.id, fp.name, policyMapping)
+                }))
+            }))
+        }));
+    }, [data?.initiatives, policyMapping]);
 
     /* Filtered initiatives */
     const filtered = useMemo(() => {

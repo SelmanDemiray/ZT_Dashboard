@@ -3,7 +3,7 @@ import { createContext, useContext, useReducer, useEffect, useCallback, useMemo,
 import type { GlobalFilterState, TenantIndex, TenantEntry, TenantSubscription } from '@/types/assessment';
 import type { ZeroTrustAssessmentReport } from '@/config/report-data';
 import { reportData as staticReportData } from '@/config/report-data';
-import { fetchTenantIndex } from '@/services/blobService';
+import { fetchTenantIndex, fetchPolicyMapping } from '@/services/blobService';
 import { fetchReportData } from '@/services/reportDataService';
 
 // ─── Context shape ────────────────────────────────────────────────────
@@ -20,6 +20,7 @@ interface GlobalFilterContextValue {
     availableSubscriptions: TenantSubscription[];
     availableResourceGroups: string[];
     availableDates: string[];
+    policyMapping: Record<string, string>;
 }
 
 const defaultFilters: GlobalFilterState = {
@@ -93,6 +94,7 @@ export function GlobalFilterProvider({ children }: { children: ReactNode }) {
     const [loading, setLoading] = useReducerState<boolean>(true);
     const [liveReportData, setLiveReportData] = useReducerState<ZeroTrustAssessmentReport>(staticReportData);
     const [reportLoading, setReportLoading] = useReducerState<boolean>(true);
+    const [policyMapping, setPolicyMapping] = useReducerState<Record<string, string>>({});
 
     useEffect(() => {
         let cancelled = false;
@@ -140,6 +142,20 @@ export function GlobalFilterProvider({ children }: { children: ReactNode }) {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
+    // Fetch policy mapping when tenant changes
+    useEffect(() => {
+        if (!filters.tenantId) return;
+        let cancelled = false;
+        fetchPolicyMapping(filters.tenantId).then(res => {
+            if (!cancelled) setPolicyMapping(res.mapping);
+        }).catch(err => {
+            console.warn('Failed to fetch policy mapping:', err);
+            if (!cancelled) setPolicyMapping({});
+        });
+        return () => { cancelled = true; };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [filters.tenantId]);
+
     // ─── Cascading derived lists ──────────────────────────────────────
 
     const availableTenants = useMemo(() => tenantIndex?.tenants ?? [], [tenantIndex]);
@@ -170,6 +186,7 @@ export function GlobalFilterProvider({ children }: { children: ReactNode }) {
         availableSubscriptions,
         availableResourceGroups,
         availableDates,
+        policyMapping,
     }), [
         filters,
         tenantIndex,
@@ -179,7 +196,8 @@ export function GlobalFilterProvider({ children }: { children: ReactNode }) {
         availableTenants,
         availableSubscriptions,
         availableResourceGroups,
-        availableDates
+        availableDates,
+        policyMapping
     ]);
 
     return (

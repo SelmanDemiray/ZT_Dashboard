@@ -141,4 +141,18 @@ $ruleStr
     }
 }
 
+# ─── policy-mapping.json (Mock for testing proper names) ──
+$mappingJson = @"
+{
+  "lastUpdated": "$(Get-Date -Format 'o')",
+  "mapping": {
+    "init-1": "Azure Security Benchmark v3",
+    "pol-1": "Storage accounts should restrict network access using virtual network rules",
+    "init-2": "CISA Zero Trust Model",
+    "pol-2": "Require Multi-Factor Authentication for admins"
+  }
+}
+"@
+Set-Content -Path "$base/policy-mapping.json" -Value $mappingJson -Encoding UTF8
+
 Write-Host "Mock data generated successfully"

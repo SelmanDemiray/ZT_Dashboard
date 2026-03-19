@@ -4,6 +4,8 @@ import type { PolicyCompliance, PolicyInitiative, PolicyResource, TenantSubscrip
 import { displaySubName } from '@/lib/format-sub-name';
 import { useShowMore } from '@/hooks/useShowMore';
 import { FilterDropdown } from '@/components/ui/FilterDropdown';
+import { useGlobalFilters } from '@/contexts/GlobalFilterContext';
+import { getMappedPolicyName } from '@/lib/policy-mapping';
 
 interface Props {
     subscriptions: TenantSubscription[];
@@ -20,8 +22,16 @@ export function PolicyExplorerCard({ subscriptions, subDataMap, defaultSubId }: 
     const [expandedId, setExpandedId] = useState<string | null>(null);
     const [rgFilter, setRgFilter] = useState('');
 
+    const { policyMapping } = useGlobalFilters();
+
     const data: PolicyCompliance | null = subDataMap[subId]?.latestSnapshot?.policyCompliance ?? null;
-    const initiatives = useMemo(() => data?.initiatives ?? [], [data?.initiatives]);
+    const initiatives = useMemo(() => {
+        const raw = data?.initiatives ?? [];
+        return raw.map(init => ({
+            ...init,
+            name: getMappedPolicyName(init.id, init.name, policyMapping)
+        }));
+    }, [data?.initiatives, policyMapping]);
 
     /* Extract all unique resource groups */
     const resourceGroups = useMemo(() => {
@@ -45,13 +55,14 @@ export function PolicyExplorerCard({ subscriptions, subDataMap, defaultSubId }: 
                         existing.count++;
                         existing.failingResources.push(r);
                     } else {
-                        map.set(fp.id, { ...fp, initName: init.name, count: 1, failingResources: [r] });
+                        const mappedName = getMappedPolicyName(fp.id, fp.name, policyMapping);
+                        map.set(fp.id, { ...fp, name: mappedName, initName: init.name, count: 1, failingResources: [r] });
                     }
                 }
             }
         }
         return Array.from(map.values());
-    }, [initiatives]);
+    }, [initiatives, policyMapping]);
 
     /* Filtered resources */
     const allResources = useMemo(() => {

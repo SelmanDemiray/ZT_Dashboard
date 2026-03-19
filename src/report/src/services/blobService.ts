@@ -88,6 +88,21 @@ export async function fetchPolicyCompliance(
     );
 }
 
+export async function fetchPolicyMapping(
+    tenantId: string,
+    noCache = false
+): Promise<{ mapping: Record<string, string> }> {
+    try {
+        return await fetchJson<{ mapping: Record<string, string> }>(
+            `${tenantId}/policy-mapping.json`,
+            noCache
+        );
+    } catch {
+        // Fallback to empty if not generated yet by playbook
+        return { mapping: {} };
+    }
+}
+
 export async function fetchDefenderRecs(
     tenantId: string,
     subscriptionId: string,
