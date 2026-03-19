@@ -59,6 +59,30 @@ foreach ($v in $msiEnvVars) {
     }
 }
 
+# ── Clear stale Az contexts ──
+# Hybrid Workers can reuse stale Az context/token caches between runs.
+try { Disable-AzContextAutosave -Scope Process | Out-Null } catch {}
+try { Disconnect-AzAccount -Scope Process -ErrorAction SilentlyContinue | Out-Null } catch {}
+try { Clear-AzContext -Scope Process -Force -ErrorAction SilentlyContinue } catch {}
+try { Clear-AzContext -Scope CurrentUser -Force -ErrorAction SilentlyContinue } catch {}
+
+function Ensure-AzSessionFresh {
+    param(
+        [int]$RefreshIfExpiringInMinutes = 10
+    )
+    try {
+        $tok = Get-AzAccessToken -ResourceUrl "https://management.azure.com/" -ErrorAction Stop
+        $minsLeft = ($tok.ExpiresOn.UtcDateTime - (Get-Date).ToUniversalTime()).TotalMinutes
+        if ($minsLeft -le $RefreshIfExpiringInMinutes) {
+            Write-Log "Az token expiring soon -- reconnecting..." "WARN"
+            Connect-AzAccount -Identity -AccountId $script:uamiClientId -Tenant $targetTenantId -Force | Out-Null
+        }
+    } catch {
+        Write-Log "Could not validate Az session -- forcing reconnect: $_" "WARN"
+        Connect-AzAccount -Identity -AccountId $script:uamiClientId -Tenant $targetTenantId -Force | Out-Null
+    }
+}
+
 function Get-ImdsToken {
     param(
         [Parameter(Mandatory)][string]$Resource,
@@ -143,6 +167,9 @@ try {
     $WarningPreference = 'SilentlyContinue'
     Connect-AzAccount -Identity -AccountId $script:uamiClientId -Tenant $targetTenantId -Force | Out-Null
     $WarningPreference = $oldWarningPreference
+    
+    # Ensure session is fresh (fixes 'token expiry' errors on Hybrid Workers)
+    Ensure-AzSessionFresh
 } catch {
     $WarningPreference = $oldWarningPreference
     Write-Log "Connect-AzAccount failed: $_" "ERROR"
