@@ -91,14 +91,10 @@ Write-Log "Starting Update-PolicyNamesMapping runbook..."
 try {
     $script:uamiClientId   = Get-AutomationVariable -Name "UserAssignedManagedIdentityClientId"
     $targetTenantId        = Get-AutomationVariable -Name "TargetTenantId"
-    $targetContainer       = Get-AutomationVariable -Name "TargetStorageContainer"
-    $storageAccountId      = Get-AutomationVariable -Name "TargetStorageAccountId" 
-
-    # Extract storage account name from Resource ID
-    # e.g., /subscriptions/.../resourceGroups/.../providers/Microsoft.Storage/storageAccounts/mystorage
-    $script:StorageAccountNameCache = ($storageAccountId -split '/')[-1]
+    $targetContainer       = Get-AutomationVariable -Name "BlobContainerName"
+    $script:StorageAccountNameCache = Get-AutomationVariable -Name "StorageAccountName"
 } catch {
-    Write-Log "Failed to retrieve required Automation Variables. Error: $_" "ERROR"
+    Write-Log "Failed to retrieve required Automation Variables. Variables not found or error: $_" "ERROR"
     throw
 }
 
