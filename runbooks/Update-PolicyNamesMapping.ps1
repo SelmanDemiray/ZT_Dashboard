@@ -201,19 +201,18 @@ try {
     $query = "policyresources | where type =~ 'microsoft.authorization/policydefinitions' | project id, name, displayName = properties.displayName"
     $policyResults = Search-AzGraph -Query $query -First 5000
     
-    foreach ($pol in $policyResults) {
-        # The id used is typically the GUID name or the full resource ID.
-        # Ensure we record both the short name and ID just in case.
-        # We will use the 'name' (GUID) as key since that's what usually shows up in alerts/reports as policy ID.
+    # Robust extraction of rows from Resource Graph result
+    $policyRows = @(if ($policyResults.PSObject.Properties.Name -contains 'Data') { $policyResults.Data } else { $policyResults })
+    
+    foreach ($pol in $policyRows) {
         $policyId = $pol.name.ToString().ToLower()
         $displayName = $pol.displayName.ToString()
         if (-not [string]::IsNullOrWhiteSpace($displayName)) {
             $mapping.policies[$policyId] = $displayName
-            # Also map by full ID for safety
             $mapping.policies[$pol.id.ToString().ToLower()] = $displayName
         }
     }
-    Write-Log "Mapped $($mapping.policies.Keys.Count) Policy Definitions."
+    Write-Log "Mapped $($mapping.policies.Keys.Count) Policy Definitions (from $($policyRows.Count) rows)."
 } catch {
     # Fallback to Get-AzPolicyDefinition if ARG fails/is not available
     Write-Log "ARG query failed, falling back to Get-AzPolicyDefinition (looping all subscriptions): $_" "WARN"
@@ -237,7 +236,10 @@ try {
     $querySets = "policyresources | where type =~ 'microsoft.authorization/policysetdefinitions' | project id, name, displayName = properties.displayName"
     $setResults = Search-AzGraph -Query $querySets -First 5000
     
-    foreach ($set in $setResults) {
+    # Robust extraction of rows from Resource Graph result
+    $setRows = @(if ($setResults.PSObject.Properties.Name -contains 'Data') { $setResults.Data } else { $setResults })
+    
+    foreach ($set in $setRows) {
         $setId = $set.name.ToString().ToLower()
         $displayName = $set.displayName.ToString()
         if (-not [string]::IsNullOrWhiteSpace($displayName)) {
@@ -245,7 +247,7 @@ try {
             $mapping.policySets[$set.id.ToString().ToLower()] = $displayName
         }
     }
-    Write-Log "Mapped $($mapping.policySets.Keys.Count) Policy Sets."
+    Write-Log "Mapped $($mapping.policySets.Keys.Count) Policy Sets (from $($setRows.Count) rows)."
 } catch {
     Write-Log "ARG query for sets failed, falling back to Get-AzPolicySetDefinition (looping all subscriptions): $_" "WARN"
     foreach ($sub in $allSubs) {
