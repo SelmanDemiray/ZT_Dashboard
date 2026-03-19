@@ -286,6 +286,62 @@ try {
     }
 }
 
+Write-Log "Fetching Built-in Policies and Policy Sets..."
+try {
+    $builtInPolicies = Get-AzPolicyDefinition -Builtin -ErrorAction SilentlyContinue
+    foreach ($pol in $builtInPolicies) {
+        $mapping.policies[$pol.Name.ToLower()] = $pol.Properties.DisplayName
+        $mapping.policies[$pol.ResourceId.ToLower()] = $pol.Properties.DisplayName
+    }
+    $builtInSets = Get-AzPolicySetDefinition -Builtin -ErrorAction SilentlyContinue
+    foreach ($set in $builtInSets) {
+        $mapping.policySets[$set.Name.ToLower()] = $set.Properties.DisplayName
+        $mapping.policySets[$set.ResourceId.ToLower()] = $set.Properties.DisplayName
+    }
+    Write-Log "Successfully fetched built-in definitions."
+} catch {
+    Write-Log "Failed to fetch built-in policies/sets: $_" "WARN"
+}
+
+Write-Log "Fetching Custom Policies and Policy Sets from all accessible Management Groups..."
+try {
+    $mgs = Get-AzManagementGroup -ErrorAction SilentlyContinue
+    foreach ($mg in $mgs) {
+        try {
+            $mgPolicies = Get-AzPolicyDefinition -ManagementGroupName $mg.Name -Custom -ErrorAction SilentlyContinue
+            foreach ($pol in $mgPolicies) {
+                $mapping.policies[$pol.Name.ToLower()] = $pol.Properties.DisplayName
+                $mapping.policies[$pol.ResourceId.ToLower()] = $pol.Properties.DisplayName
+            }
+            $mgSets = Get-AzPolicySetDefinition -ManagementGroupName $mg.Name -Custom -ErrorAction SilentlyContinue
+            foreach ($set in $mgSets) {
+                $mapping.policySets[$set.Name.ToLower()] = $set.Properties.DisplayName
+                $mapping.policySets[$set.ResourceId.ToLower()] = $set.Properties.DisplayName
+            }
+        } catch {}
+    }
+    Write-Log "Successfully fetched Management Group definitions."
+} catch {
+    Write-Log "Failed to list Management Groups: $_" "WARN"
+}
+
+Write-Log "Fetching Custom Policies and Policy Sets from all accessible Subscriptions explicitly..."
+foreach ($sub in $allSubs) {
+    try {
+        Set-AzContext -SubscriptionId $sub.Id -ErrorAction SilentlyContinue | Out-Null
+        $subPolicies = Get-AzPolicyDefinition -Custom -ErrorAction SilentlyContinue
+        foreach ($pol in $subPolicies) {
+            $mapping.policies[$pol.Name.ToLower()] = $pol.Properties.DisplayName
+            $mapping.policies[$pol.ResourceId.ToLower()] = $pol.Properties.DisplayName
+        }
+        $subSets = Get-AzPolicySetDefinition -Custom -ErrorAction SilentlyContinue
+        foreach ($set in $subSets) {
+            $mapping.policySets[$set.Name.ToLower()] = $set.Properties.DisplayName
+            $mapping.policySets[$set.ResourceId.ToLower()] = $set.Properties.DisplayName
+        }
+    } catch {}
+}
+
 # Merge all into one flat mapping object as well for easy frontend lookup
 $flatMapping = @{}
 foreach ($key in $mapping.policies.Keys) { $flatMapping[$key] = $mapping.policies[$key] }

@@ -21,6 +21,8 @@ import {
     TooltipTrigger,
 } from '@/components/ui/tooltip';
 import { FilterDropdown } from '@/components/ui/FilterDropdown';
+import { useGlobalFilters } from '@/contexts/GlobalFilterContext';
+import { getMappedPolicyName } from '@/lib/policy-mapping';
 
 interface SubDataEntry {
     sub: TenantSubscription;
@@ -65,6 +67,7 @@ const CustomTooltip = ({ active, payload }: { active?: boolean; payload?: Array<
 };
 
 export function ComplianceCard({ subscriptions, subDataMap, defaultSubId }: Props) {
+    const { policyMapping } = useGlobalFilters();
     const [expanded, setExpanded] = useState(false);
     const [subId, setSubId] = useState(defaultSubId || subscriptions[0]?.id || '');
     const [rgFilter, setRgFilter] = useState('');
@@ -302,6 +305,7 @@ export function ComplianceCard({ subscriptions, subDataMap, defaultSubId }: Prop
                                 const pct = total > 0 ? Math.round((init.compliantCount / total) * 100) : 0;
                                 const rgMap = groupByRG(init.resources);
                                 const isHovered = hoveredInitId === init.id;
+                                const mappedName = getMappedPolicyName(init.id, init.name, policyMapping);
 
                                 return (
                                     <Tooltip key={init.id}>
@@ -323,7 +327,7 @@ export function ComplianceCard({ subscriptions, subDataMap, defaultSubId }: Prop
                                                         >
                                                             {init.type}
                                                         </span>
-                                                        <span className="font-medium truncate max-w-[160px]">{init.name}</span>
+                                                        <span className="font-medium truncate max-w-[160px]">{mappedName}</span>
                                                     </div>
                                                     <span
                                                         className="shrink-0 tabular-nums font-semibold text-sm ml-2"
@@ -384,7 +388,7 @@ export function ComplianceCard({ subscriptions, subDataMap, defaultSubId }: Prop
                                             </div>
                                         </TooltipTrigger>
                                         <TooltipContent side="left" className="max-w-[260px] text-xs space-y-1">
-                                            <p className="font-semibold">{init.name}</p>
+                                            <p className="font-semibold">{mappedName}</p>
                                             <p className="text-muted-foreground">{init.totalPolicies} policies · {init.type} · {Object.keys(rgMap).length} resource groups</p>
                                             <div className="flex gap-3 pt-0.5">
                                                 <span className="text-emerald-500">✓ {init.compliantCount} compliant</span>
