@@ -19,6 +19,32 @@ $script:StorageBearerToken = $null
 $script:StorageTokenExpiry = [int64]0
 $script:StorageAccountNameCache = $null
 
+# ─── Hybrid Worker Environment Setup ──────────────────────────────────────────
+$standardPaths = @(
+    "C:\ProgramData\ZtModules",
+    "C:\Program Files\PowerShell\Modules",
+    "C:\Program Files\WindowsPowerShell\Modules"
+)
+foreach ($sp in $standardPaths) {
+    if ((Test-Path $sp) -and ($env:PSModulePath -notmatch [regex]::Escape($sp))) {
+        $env:PSModulePath = "$sp;$env:PSModulePath"
+    }
+}
+
+# ─── Module Validation ────────────────────────────────────────────────────────
+$requiredModules = @("Az.Accounts", "Az.ResourceGraph")
+foreach ($mod in $requiredModules) {
+    if (-not (Get-Module -Name $mod -ListAvailable)) {
+        Write-Log "Required module $mod is not found. Attempting to import..." "WARN"
+        try { Import-Module $mod -ErrorAction Stop } catch {
+            Write-Log "Failed to find or import $mod. Ensure it is installed on the Hybrid Worker." "ERROR"
+            throw "Missing module: $mod"
+        }
+    } else {
+        Import-Module $mod -ErrorAction SilentlyContinue
+    }
+}
+
 # ─── Auth Helpers ────────────────────────────────────────────────────────────
 function Get-ImdsToken {
     param(
