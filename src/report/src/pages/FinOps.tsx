@@ -16,15 +16,13 @@ import {
     BarChart, Bar, XAxis, YAxis, CartesianGrid,
     Tooltip as RechartsTooltip, ResponsiveContainer,
     PieChart, Pie, Cell, LineChart, Line, Legend,
-    AreaChart, Area,
 } from 'recharts';
 import {
     DollarSign, TrendingUp, TrendingDown, AlertTriangle,
-    Lightbulb, Target, ArrowUpDown, PiggyBank, Calendar,
+    Lightbulb, Target, PiggyBank, Calendar,
     BarChart3, Wallet, ArrowUp, ArrowDown,
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 
 // ─── Cost Data ────────────────────────────────────────────────────────
 interface ServiceCost {

@@ -19,7 +19,7 @@ import {
 } from 'recharts';
 import {
     Globe, Shield, Wifi, Router, ArrowUpDown, ShieldCheck,
-    ShieldAlert, ArrowDownUp, Lock,
+    ShieldAlert, Lock,
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 
