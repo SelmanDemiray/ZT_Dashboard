@@ -130,8 +130,28 @@ export interface Governance {
 export interface StorageAccount {
   id: string;
   name: string;
-  resourceGroup: string;
   subscriptionId: string;
+  subscriptionName: string;
+  resourceGroup: string;
+  region: string;
+  kind: string;
+  tier: string;
+  redundancy: string;
+  accessTier: string;
+  encryption: boolean;
+  httpsOnly: boolean;
+  blobCapacityGB: number;
+  fileCapacityGB: number;
+  tableCapacityGB: number;
+  queueCapacityGB: number;
+  monthlyCostUSD: number;
+  transactions30d: number;
+  egressGB30d: number;
+  ingressGB30d: number;
+  createdDate: string;
+  tags: Record<string, string>;
+  
+  // Backwards compatibility with overview cards
   location: string;
   tlsVersion: string;
   publicNetworkAccess: string;
@@ -143,6 +163,85 @@ export interface StorageAccountsData {
   runDate: string;
   accounts: StorageAccount[];
 }
+
+// ─── FinOps ───────────────────────────────────────────────────────────
+export interface ServiceCost {
+  service: string;
+  currentMonth: number;
+  previousMonth: number;
+  trend: number;
+  color: string;
+}
+
+export interface SubscriptionCost {
+  subscriptionId: string;
+  subscriptionName: string;
+  currentMonth: number;
+  budget: number;
+  forecast: number;
+}
+
+export interface TeamCost {
+  team: string;
+  compute: number;
+  storage: number;
+  networking: number;
+  databases: number;
+  other: number;
+}
+
+export interface DailyCost {
+  date: string;
+  cost: number;
+  budget: number;
+}
+
+export interface WeeklyCost {
+  week: string;
+  actual: number;
+  budget: number;
+}
+
+export interface MonthlyCost {
+  month: string;
+  actual: number;
+  budget: number;
+  forecast: number;
+}
+
+export interface CostAnomaly {
+  id: string;
+  date: string;
+  service: string;
+  subscriptionName: string;
+  expectedCost: number;
+  actualCost: number;
+  severity: 'high' | 'medium' | 'low';
+  explanation: string;
+}
+
+export interface SavingsRecommendation {
+  id: string;
+  title: string;
+  description: string;
+  estimatedSavingsUSD: number;
+  effort: 'Low' | 'Medium' | 'High';
+  category: string;
+  resourceCount: number;
+}
+
+export interface FinOpsData {
+  runDate: string;
+  serviceCosts: ServiceCost[];
+  subscriptionCosts: SubscriptionCost[];
+  teamCosts: TeamCost[];
+  dailyCostData: DailyCost[];
+  weeklyCostData: WeeklyCost[];
+  monthlyCostData: MonthlyCost[];
+  costAnomalies: CostAnomaly[];
+  savingsRecommendations: SavingsRecommendation[];
+}
+
 
 // ─── Tenant Index ─────────────────────────────────────────────────────
 export interface TenantSubscription {
@@ -273,4 +372,5 @@ export interface RunSnapshot {
   defenderRecs: DefenderRecs;
   governance: Governance;
   storageAccounts: StorageAccountsData;
+  finops: FinOpsData;
 }

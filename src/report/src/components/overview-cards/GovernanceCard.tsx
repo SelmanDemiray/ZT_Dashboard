@@ -3,7 +3,7 @@ import { displaySubName } from '@/lib/format-sub-name';
 import {
     AlertTriangle, CheckCircle2, Clock, CircleDot,
     ChevronDown, ChevronUp, Filter, Info, User,
-    Calendar, ClipboardList, Link2,
+    Calendar, ClipboardList, Link2, Maximize2,
 } from 'lucide-react';
 import type { Governance, GovernanceStatus } from '@/types/assessment';
 import type { TenantSubscription, RunSnapshot } from '@/types/assessment';
@@ -14,6 +14,7 @@ import {
     TooltipTrigger,
 } from '@/components/ui/tooltip';
 import { FilterDropdown } from '@/components/ui/FilterDropdown';
+import { Dialog, DialogContent, DialogTrigger, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 
 interface SubDataEntry {
     sub: TenantSubscription;
@@ -25,6 +26,8 @@ interface Props {
     subscriptions: TenantSubscription[];
     subDataMap: Record<string, SubDataEntry>;
     defaultSubId: string;
+    expanded?: boolean;
+    onToggleExpanded?: () => void;
 }
 
 const STATUS_CONFIG: Record<GovernanceStatus, { label: string; color: string; icon: React.ElementType; bg: string }> = {
@@ -34,8 +37,10 @@ const STATUS_CONFIG: Record<GovernanceStatus, { label: string; color: string; ic
     overdue: { label: 'Overdue', color: '#ef4444', bg: '#ef444418', icon: AlertTriangle },
 };
 
-export function GovernanceCard({ subscriptions, subDataMap, defaultSubId }: Props) {
-    const [expanded, setExpanded] = useState(false);
+export function GovernanceCard({ subscriptions, subDataMap, defaultSubId, expanded: propExpanded, onToggleExpanded }: Props) {
+    const [localExpanded, setLocalExpanded] = useState(false);
+    const expanded = propExpanded !== undefined ? propExpanded : localExpanded;
+    const toggleExpanded = onToggleExpanded || (() => setLocalExpanded(v => !v));
     const [subId, setSubId] = useState(defaultSubId || subscriptions[0]?.id || '');
     const [rgFilter, setRgFilter] = useState('');
     const [statusFilter, setStatusFilter] = useState<GovernanceStatus | ''>('');
@@ -99,10 +104,10 @@ export function GovernanceCard({ subscriptions, subDataMap, defaultSubId }: Prop
         <TooltipProvider delayDuration={150}>
             <div
                 className={`glass-card gradient-border scan-line cursor-pointer transition-all duration-300 hover:shadow-lg hover:-translate-y-1 hover:border-border/60 ${hasOverdue ? 'glow-warning' : ''}`}
-                onClick={() => setExpanded(v => !v)}
+                onClick={() => toggleExpanded()}
                 role="button"
                 tabIndex={0}
-                onKeyDown={(e) => e.key === 'Enter' && setExpanded(v => !v)}
+                onKeyDown={(e) => e.key === 'Enter' && toggleExpanded()}
             >
                 {/* ─── Header ─── */}
                 <div className="flex items-start justify-between px-5 pt-5 pb-3 gap-2">
@@ -125,9 +130,100 @@ export function GovernanceCard({ subscriptions, subDataMap, defaultSubId }: Prop
                             </p>
                         </div>
                     </div>
-                    <span className="text-muted-foreground shrink-0">
-                        {expanded ? <ChevronUp className="size-4" /> : <ChevronDown className="size-4" />}
-                    </span>
+                    <div className="flex items-center gap-1.5" onClick={e => e.stopPropagation()}>
+                        <Dialog>
+                            <DialogTrigger asChild>
+                                <button className="text-muted-foreground hover:text-foreground transition-colors p-1 rounded-md hover:bg-muted" title="Maximize">
+                                    <Maximize2 className="size-3.5" />
+                                </button>
+                            </DialogTrigger>
+                            <DialogContent className="max-w-5xl h-[85vh] flex flex-col p-0 overflow-hidden bg-background/95 backdrop-blur border-muted z-50">
+                                <DialogHeader className="p-6 border-b flex-shrink-0">
+                                    <DialogTitle className="flex items-center gap-2">
+                                        <ClipboardList className="size-5" />
+                                        Governance Rules Details
+                                    </DialogTitle>
+                                </DialogHeader>
+                                <div className="flex-1 overflow-y-auto p-6 space-y-6">
+                                    <div className="flex items-center gap-8 pb-6 border-b">
+                                        <div className="relative w-32 h-32 shrink-0 flex items-center justify-center">
+                                            <svg className="w-full h-full -rotate-90" viewBox="0 0 100 100">
+                                                <circle cx="50" cy="50" r={radius} fill="none" stroke="currentColor" strokeWidth="6" className="text-muted/30" />
+                                                <circle
+                                                    cx="50" cy="50" r={radius} fill="none"
+                                                    stroke={accentColor}
+                                                    strokeWidth="6" strokeLinecap="round"
+                                                    strokeDasharray={circumference}
+                                                    strokeDashoffset={dashoffset}
+                                                    className="progress-ring-animated"
+                                                    style={{ filter: `drop-shadow(0 0 6px ${accentColor}60)` }}
+                                                />
+                                            </svg>
+                                            <div className="absolute inset-0 flex flex-col items-center justify-center">
+                                                <span className="stat-glow text-3xl font-bold" style={{ color: accentColor }}>
+                                                    {stats.avgCompletion}%
+                                                </span>
+                                            </div>
+                                        </div>
+                                        <div className="flex-1 grid grid-cols-2 md:grid-cols-4 gap-6">
+                                            {(Object.keys(STATUS_CONFIG) as GovernanceStatus[]).map((status) => {
+                                                const cfg = STATUS_CONFIG[status];
+                                                const count = stats.counts[status];
+                                                return (
+                                                    <div key={`modal-${status}`} className="space-y-1">
+                                                        <div className="flex items-center gap-1.5 font-medium text-sm" style={{ color: cfg.color }}>
+                                                            <cfg.icon className="size-4" /> {cfg.label}
+                                                        </div>
+                                                        <div className="text-2xl font-bold tabular-nums text-foreground">{count}</div>
+                                                    </div>
+                                                );
+                                            })}
+                                        </div>
+                                    </div>
+                                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                                        {filteredRules.map((rule) => {
+                                            const cfg = STATUS_CONFIG[rule.status];
+                                            const Icon = cfg.icon;
+                                            const daysUntilDue = Math.ceil((new Date(rule.dueDate).getTime() - Date.now()) / 86400000);
+                                            const isOverdue = daysUntilDue < 0;
+                                            const criteriaCompleted = rule.completionCriteria.filter(c => c.completed).length;
+
+                                            return (
+                                                <div key={`modal-${rule.id}`} className="p-4 rounded-xl border bg-muted/20 space-y-3">
+                                                    <div className="flex items-start gap-3">
+                                                        <Icon className="size-5 shrink-0 mt-0.5" style={{ color: cfg.color }} />
+                                                        <div className="flex-1 min-w-0">
+                                                            <p className="font-semibold">{rule.name}</p>
+                                                            <p className="text-muted-foreground text-xs mt-1">{rule.description}</p>
+                                                        </div>
+                                                    </div>
+                                                    <div className="flex items-center gap-3 text-xs text-muted-foreground flex-wrap">
+                                                        <span className="flex items-center gap-1"><User className="size-3" /> {rule.owner}</span>
+                                                        <span className={`flex items-center gap-1 font-medium ${isOverdue ? 'text-red-500' : ''}`}>
+                                                            <Calendar className="size-3" />
+                                                            {isOverdue ? `${Math.abs(daysUntilDue)}d overdue` : `due in ${daysUntilDue}d`}
+                                                        </span>
+                                                    </div>
+                                                    <div>
+                                                        <div className="flex justify-between text-xs mb-1 font-medium">
+                                                            <span>Progress ({criteriaCompleted}/{rule.completionCriteria.length})</span>
+                                                            <span style={{ color: cfg.color }}>{rule.completionPercentage}%</span>
+                                                        </div>
+                                                        <div className="w-full h-1.5 bg-muted rounded-full overflow-hidden">
+                                                            <div className="h-full rounded-full transition-all" style={{ width: `${rule.completionPercentage}%`, background: cfg.color }} />
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            );
+                                        })}
+                                    </div>
+                                </div>
+                            </DialogContent>
+                        </Dialog>
+                        <span className="text-muted-foreground shrink-0 p-1 rounded-md hover:bg-muted transition-colors cursor-pointer" onClick={(e) => { e.stopPropagation(); toggleExpanded(); }}>
+                            {expanded ? <ChevronUp className="size-4" /> : <ChevronDown className="size-4" />}
+                        </span>
+                    </div>
                 </div>
 
                 {/* ─── On-card filters ─── */}

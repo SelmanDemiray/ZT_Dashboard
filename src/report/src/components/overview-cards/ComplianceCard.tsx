@@ -9,7 +9,7 @@ import {
 import { ChartContainer } from '@/components/ui/chart';
 import {
     ShieldCheck, ChevronDown, ChevronUp, Filter,
-    CheckCircle2, XCircle, MinusCircle, Layers, FolderOpen, Info,
+    CheckCircle2, XCircle, MinusCircle, Layers, FolderOpen, Info, Maximize2
 } from 'lucide-react';
 import type { PolicyCompliance, PolicyInitiative, PolicyResource } from '@/types/assessment';
 import type { TenantSubscription } from '@/types/assessment';
@@ -23,6 +23,7 @@ import {
 import { FilterDropdown } from '@/components/ui/FilterDropdown';
 import { useGlobalFilters } from '@/contexts/GlobalFilterContext';
 import { getMappedPolicyName } from '@/lib/policy-mapping';
+import { Dialog, DialogContent, DialogTrigger, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 
 interface SubDataEntry {
     sub: TenantSubscription;
@@ -34,6 +35,8 @@ interface Props {
     subscriptions: TenantSubscription[];
     subDataMap: Record<string, SubDataEntry>;
     defaultSubId: string;
+    expanded?: boolean;
+    onToggleExpanded?: () => void;
 }
 
 const COLORS = {
@@ -66,9 +69,11 @@ const CustomTooltip = ({ active, payload }: { active?: boolean; payload?: Array<
     );
 };
 
-export function ComplianceCard({ subscriptions, subDataMap, defaultSubId }: Props) {
+export function ComplianceCard({ subscriptions, subDataMap, defaultSubId, expanded: propExpanded, onToggleExpanded }: Props) {
     const { policyMapping } = useGlobalFilters();
-    const [expanded, setExpanded] = useState(false);
+    const [localExpanded, setLocalExpanded] = useState(false);
+    const expanded = propExpanded !== undefined ? propExpanded : localExpanded;
+    const toggleExpanded = onToggleExpanded || (() => setLocalExpanded(v => !v));
     const [subId, setSubId] = useState(defaultSubId || subscriptions[0]?.id || '');
     const [rgFilter, setRgFilter] = useState('');
     const [hoveredInitId, setHoveredInitId] = useState<string | null>(null);
@@ -144,10 +149,10 @@ export function ComplianceCard({ subscriptions, subDataMap, defaultSubId }: Prop
         <TooltipProvider delayDuration={150}>
             <div
                 className={`glass-card gradient-border scan-line cursor-pointer transition-all duration-300 hover:shadow-lg hover:-translate-y-1 hover:border-border/60 ${!isHealthy ? 'glow-warning' : ''}`}
-                onClick={() => setExpanded(v => !v)}
+                onClick={() => toggleExpanded()}
                 role="button"
                 tabIndex={0}
-                onKeyDown={(e) => e.key === 'Enter' && setExpanded(v => !v)}
+                onKeyDown={(e) => e.key === 'Enter' && toggleExpanded()}
             >
                 {/* ─── Header ─── */}
                 <div className="flex items-start justify-between px-5 pt-5 pb-3 gap-2">
@@ -164,8 +169,134 @@ export function ComplianceCard({ subscriptions, subDataMap, defaultSubId }: Prop
                             </p>
                         </div>
                     </div>
-                    <div className="flex items-center gap-1.5">
-                        <span className="text-muted-foreground shrink-0">
+                    <div className="flex items-center gap-1.5" onClick={e => e.stopPropagation()}>
+                        <Dialog>
+                            <DialogTrigger asChild>
+                                <button className="text-muted-foreground hover:text-foreground transition-colors p-1 rounded-md hover:bg-muted" title="Maximize">
+                                    <Maximize2 className="size-3.5" />
+                                </button>
+                            </DialogTrigger>
+                            <DialogContent className="max-w-5xl h-[85vh] flex flex-col p-0 overflow-hidden bg-background/95 backdrop-blur border-muted z-50">
+                                <DialogHeader className="p-6 border-b flex-shrink-0">
+                                    <DialogTitle className="flex items-center gap-2">
+                                        <ShieldCheck className="size-5" style={{ color: accentColor }} />
+                                        Policy Compliance Details
+                                    </DialogTitle>
+                                </DialogHeader>
+                                <div className="flex-1 overflow-y-auto p-6 space-y-6">
+                                    <div className="flex items-center gap-8 pb-6 border-b">
+                                        {/* Chart & Stats mapped for Dialog */}
+                                        <div className="relative w-40 h-40 shrink-0">
+                                            <ChartContainer
+                                                config={{
+                                                    compliant: { label: 'Compliant', color: COLORS.compliant },
+                                                    nonCompliant: { label: 'Non-Compliant', color: COLORS.nonCompliant },
+                                                    exempt: { label: 'Exempt', color: COLORS.exempt },
+                                                }}
+                                                className="w-full h-full"
+                                            >
+                                                <PieChart>
+                                                    <Pie
+                                                        data={pieData}
+                                                        innerRadius={48}
+                                                        outerRadius={78}
+                                                        paddingAngle={3}
+                                                        dataKey="value"
+                                                    >
+                                                        {pieData.map((entry) => (
+                                                            <Cell key={`d-${entry.name}`} fill={entry.color} />
+                                                        ))}
+                                                    </Pie>
+                                                    <ReTooltip content={<CustomTooltip />} />
+                                                </PieChart>
+                                            </ChartContainer>
+                                            <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
+                                                <span className="stat-glow text-3xl font-bold" style={{ color: accentColor }}>
+                                                    {stats.pct}%
+                                                </span>
+                                            </div>
+                                        </div>
+                                        <div className="flex-1 space-y-4">
+                                            <div>
+                                                <div className="text-4xl font-bold tracking-tight tabular-nums" style={{ color: accentColor }}>
+                                                    {stats.compliant.toLocaleString()}
+                                                </div>
+                                                <div className="text-sm text-muted-foreground">
+                                                    of {stats.total.toLocaleString()} resources compliant
+                                                </div>
+                                            </div>
+                                            <div className="grid grid-cols-3 gap-6">
+                                                {[
+                                                    { label: 'Compliant', val: stats.compliant, color: COLORS.compliant, icon: CheckCircle2 },
+                                                    { label: 'Non-Compliant', val: stats.nonCompliant, color: COLORS.nonCompliant, icon: XCircle },
+                                                    { label: 'Exempt', val: stats.exempt, color: COLORS.exempt, icon: MinusCircle },
+                                                ].map(({ label, val, color, icon: Icon }) => (
+                                                    <div key={`d-${label}`} className="space-y-1">
+                                                        <div className="flex items-center gap-1.5 font-medium text-sm" style={{ color }}>
+                                                            <Icon className="size-4" /> {label}
+                                                        </div>
+                                                        <div className="text-lg font-bold tabular-nums text-foreground">{val}</div>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div className="space-y-3">
+                                        <h4 className="font-semibold text-lg flex items-center gap-2">
+                                            <Layers className="size-5 text-muted-foreground" />
+                                            Initiative Breakdown
+                                        </h4>
+                                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                            {filteredInitiatives.map((init: PolicyInitiative) => {
+                                                const total = init.compliantCount + init.nonCompliantCount + init.exemptCount;
+                                                const pct = total > 0 ? Math.round((init.compliantCount / total) * 100) : 0;
+                                                const mappedName = getMappedPolicyName(init.id, init.name, policyMapping);
+
+                                                return (
+                                                    <div key={`d-${init.id}`} className="p-4 rounded-xl border bg-muted/20 space-y-3">
+                                                        <div className="flex justify-between items-start gap-4">
+                                                            <div>
+                                                                <span
+                                                                    className="text-[10px] font-bold uppercase px-1.5 py-0.5 rounded mr-2"
+                                                                    style={{
+                                                                        background: init.type === 'builtin' ? '#3b82f620' : '#8b5cf620',
+                                                                        color: init.type === 'builtin' ? '#3b82f6' : '#8b5cf6',
+                                                                    }}
+                                                                >
+                                                                    {init.type}
+                                                                </span>
+                                                                <span className="font-medium text-sm">{mappedName}</span>
+                                                            </div>
+                                                            <span
+                                                                className="shrink-0 tabular-nums font-bold"
+                                                                style={{ color: pct >= 80 ? COLORS.compliant : pct >= 50 ? '#eab308' : COLORS.nonCompliant }}
+                                                            >
+                                                                {pct}%
+                                                            </span>
+                                                        </div>
+                                                        <div className="w-full h-2 bg-muted rounded-full overflow-hidden">
+                                                            <div
+                                                                className="h-full rounded-full"
+                                                                style={{
+                                                                    width: `${pct}%`,
+                                                                    background: `linear-gradient(90deg, ${pct >= 80 ? COLORS.compliant : pct >= 50 ? '#eab308' : COLORS.nonCompliant}, ${accentColor}88)`,
+                                                                }}
+                                                            />
+                                                        </div>
+                                                        <div className="flex gap-4 text-xs text-muted-foreground">
+                                                            <span className="flex items-center gap-1.5"><CheckCircle2 className="size-3.5 text-emerald-500" /> {init.compliantCount}</span>
+                                                            <span className="flex items-center gap-1.5"><XCircle className="size-3.5 text-red-500" /> {init.nonCompliantCount}</span>
+                                                            <span className="flex items-center gap-1.5"><MinusCircle className="size-3.5 text-violet-500" /> {init.exemptCount}</span>
+                                                        </div>
+                                                    </div>
+                                                );
+                                            })}
+                                        </div>
+                                    </div>
+                                </div>
+                            </DialogContent>
+                        </Dialog>
+                        <span className="text-muted-foreground shrink-0 p-1 rounded-md hover:bg-muted transition-colors cursor-pointer" onClick={(e) => { e.stopPropagation(); toggleExpanded(); }}>
                             {expanded ? <ChevronUp className="size-4" /> : <ChevronDown className="size-4" />}
                         </span>
                     </div>

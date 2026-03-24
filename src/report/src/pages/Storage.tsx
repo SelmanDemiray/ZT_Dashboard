@@ -2,6 +2,8 @@ import React from 'react';
 import { PageHeader, PageHeaderHeading } from '@/components/page-header';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { useGlobalFilters } from '@/contexts/GlobalFilterContext';
+import { fetchStorageAccounts } from '@/services/blobService';
+import type { StorageAccount } from '@/types/assessment';
 import { useSettings } from '@/contexts/SettingsContext';
 import {
     Select,
@@ -42,107 +44,9 @@ import {
 import { HardDrive, Database, TrendingUp, DollarSign, Lock, Unlock, ArrowUpDown } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 
-// ─── Storage Account Data ─────────────────────────────────────────────
-interface StorageAccount {
-    id: string;
-    name: string;
-    subscriptionId: string;
-    subscriptionName: string;
-    resourceGroup: string;
-    region: string;
-    kind: string;
-    tier: string;
-    redundancy: string;
-    accessTier: 'Hot' | 'Cool' | 'Archive';
-    encryption: boolean;
-    httpsOnly: boolean;
-    blobCapacityGB: number;
-    fileCapacityGB: number;
-    tableCapacityGB: number;
-    queueCapacityGB: number;
-    monthlyCostUSD: number;
-    transactions30d: number;
-    egressGB30d: number;
-    ingressGB30d: number;
-    createdDate: string;
-    tags: Record<string, string>;
-}
+const CAPACITY_COLORS = ['#3b82f6', '#22c55e', '#f59e0b', '#ec4899'];
 
-const storageAccounts: StorageAccount[] = [
-    {
-        id: 'sa-001', name: 'prodstorageeast01', subscriptionId: 'sub-prod-001',
-        subscriptionName: 'Production', resourceGroup: 'rg-prod-data',
-        region: 'East US', kind: 'StorageV2', tier: 'Standard', redundancy: 'GRS',
-        accessTier: 'Hot', encryption: true, httpsOnly: true,
-        blobCapacityGB: 2450, fileCapacityGB: 180, tableCapacityGB: 45, queueCapacityGB: 2,
-        monthlyCostUSD: 385.40, transactions30d: 12500000, egressGB30d: 890, ingressGB30d: 1250,
-        createdDate: '2024-03-15', tags: { environment: 'production', team: 'data-engineering' },
-    },
-    {
-        id: 'sa-002', name: 'prodstoragewest01', subscriptionId: 'sub-prod-001',
-        subscriptionName: 'Production', resourceGroup: 'rg-prod-apps',
-        region: 'West US 2', kind: 'StorageV2', tier: 'Premium', redundancy: 'ZRS',
-        accessTier: 'Hot', encryption: true, httpsOnly: true,
-        blobCapacityGB: 1800, fileCapacityGB: 520, tableCapacityGB: 12, queueCapacityGB: 5,
-        monthlyCostUSD: 612.80, transactions30d: 8900000, egressGB30d: 450, ingressGB30d: 780,
-        createdDate: '2024-01-10', tags: { environment: 'production', team: 'platform' },
-    },
-    {
-        id: 'sa-003', name: 'devstorageeast01', subscriptionId: 'sub-dev-001',
-        subscriptionName: 'Development', resourceGroup: 'rg-dev-shared',
-        region: 'East US', kind: 'StorageV2', tier: 'Standard', redundancy: 'LRS',
-        accessTier: 'Cool', encryption: true, httpsOnly: true,
-        blobCapacityGB: 340, fileCapacityGB: 25, tableCapacityGB: 8, queueCapacityGB: 1,
-        monthlyCostUSD: 42.15, transactions30d: 1200000, egressGB30d: 65, ingressGB30d: 120,
-        createdDate: '2024-06-20', tags: { environment: 'development', team: 'frontend' },
-    },
-    {
-        id: 'sa-004', name: 'archivesouth01', subscriptionId: 'sub-prod-001',
-        subscriptionName: 'Production', resourceGroup: 'rg-prod-archive',
-        region: 'South Central US', kind: 'BlobStorage', tier: 'Standard', redundancy: 'RA-GRS',
-        accessTier: 'Archive', encryption: true, httpsOnly: true,
-        blobCapacityGB: 15200, fileCapacityGB: 0, tableCapacityGB: 0, queueCapacityGB: 0,
-        monthlyCostUSD: 152.00, transactions30d: 45000, egressGB30d: 25, ingressGB30d: 380,
-        createdDate: '2023-11-05', tags: { environment: 'production', team: 'compliance' },
-    },
-    {
-        id: 'sa-005', name: 'stagingstorage01', subscriptionId: 'sub-staging-001',
-        subscriptionName: 'Staging', resourceGroup: 'rg-staging-apps',
-        region: 'East US 2', kind: 'StorageV2', tier: 'Standard', redundancy: 'ZRS',
-        accessTier: 'Hot', encryption: true, httpsOnly: false,
-        blobCapacityGB: 680, fileCapacityGB: 90, tableCapacityGB: 15, queueCapacityGB: 3,
-        monthlyCostUSD: 98.60, transactions30d: 3400000, egressGB30d: 210, ingressGB30d: 340,
-        createdDate: '2024-08-12', tags: { environment: 'staging', team: 'qa' },
-    },
-    {
-        id: 'sa-006', name: 'datalakeprod01', subscriptionId: 'sub-prod-001',
-        subscriptionName: 'Production', resourceGroup: 'rg-prod-datalake',
-        region: 'East US', kind: 'StorageV2', tier: 'Standard', redundancy: 'GRS',
-        accessTier: 'Hot', encryption: true, httpsOnly: true,
-        blobCapacityGB: 8400, fileCapacityGB: 0, tableCapacityGB: 120, queueCapacityGB: 0,
-        monthlyCostUSD: 920.50, transactions30d: 28000000, egressGB30d: 2400, ingressGB30d: 3100,
-        createdDate: '2023-09-01', tags: { environment: 'production', team: 'data-engineering' },
-    },
-    {
-        id: 'sa-007', name: 'backupstorage01', subscriptionId: 'sub-prod-001',
-        subscriptionName: 'Production', resourceGroup: 'rg-prod-backup',
-        region: 'West US', kind: 'StorageV2', tier: 'Standard', redundancy: 'RA-GRS',
-        accessTier: 'Cool', encryption: true, httpsOnly: true,
-        blobCapacityGB: 4200, fileCapacityGB: 0, tableCapacityGB: 0, queueCapacityGB: 0,
-        monthlyCostUSD: 210.00, transactions30d: 890000, egressGB30d: 150, ingressGB30d: 520,
-        createdDate: '2024-02-28', tags: { environment: 'production', team: 'infrastructure' },
-    },
-    {
-        id: 'sa-008', name: 'mlstorage01', subscriptionId: 'sub-prod-001',
-        subscriptionName: 'Production', resourceGroup: 'rg-prod-ml',
-        region: 'East US', kind: 'StorageV2', tier: 'Premium', redundancy: 'LRS',
-        accessTier: 'Hot', encryption: true, httpsOnly: true,
-        blobCapacityGB: 3200, fileCapacityGB: 800, tableCapacityGB: 0, queueCapacityGB: 0,
-        monthlyCostUSD: 1450.00, transactions30d: 45000000, egressGB30d: 5600, ingressGB30d: 4800,
-        createdDate: '2024-04-15', tags: { environment: 'production', team: 'ml-ops' },
-    },
-];
-
+// Fallback cost trend mock since ARG doesn't have time-series metrics
 const costTrendData = [
     { month: 'Sep 2025', cost: 2650, egress: 780 },
     { month: 'Oct 2025', cost: 2780, egress: 820 },
@@ -159,17 +63,42 @@ const TIER_COLORS: Record<string, string> = {
     Archive: '#8b5cf6',
 };
 
-const CAPACITY_COLORS = ['#3b82f6', '#22c55e', '#f59e0b', '#ec4899'];
-
 type SortField = 'name' | 'totalCapacity' | 'monthlyCostUSD' | 'accessTier';
 type SortDir = 'asc' | 'desc';
 
 export default function Storage() {
-    const { filters, dispatch, availableSubscriptions } = useGlobalFilters();
+    const { filters, dispatch, availableSubscriptions, availableDates } = useGlobalFilters();
     const { settings } = useSettings();
     const [sortField, setSortField] = React.useState<SortField>('totalCapacity');
     const [sortDir, setSortDir] = React.useState<SortDir>('desc');
     const [filterTier, setFilterTier] = React.useState<string>('all');
+
+    const [storageAccounts, setStorageAccounts] = React.useState<StorageAccount[]>([]);
+    const [loading, setLoading] = React.useState(true);
+
+    React.useEffect(() => {
+        if (!filters.tenantId || availableSubscriptions.length === 0 || availableDates.length === 0) {
+            setStorageAccounts([]);
+            setLoading(false);
+            return;
+        }
+
+        let cancelled = false;
+        setLoading(true);
+
+        const tasks = availableSubscriptions.map((sub) =>
+            fetchStorageAccounts(filters.tenantId, sub.id, 'latest').catch(() => null)
+        );
+
+        Promise.all(tasks).then((results) => {
+            if (cancelled) return;
+            const allAccounts = results.flatMap((r) => r?.accounts || []);
+            setStorageAccounts(allAccounts);
+            setLoading(false);
+        });
+
+        return () => { cancelled = true; };
+    }, [filters.tenantId, availableSubscriptions, availableDates]);
 
     // ─── Apply global filters ─────────────────────────────────────────
     const filtered = React.useMemo(() => {
@@ -315,25 +244,29 @@ export default function Storage() {
             </div>
 
             {/* ── KPI Cards ── */}
-            <div className="grid gap-3 grid-cols-2 md:grid-cols-3 lg:grid-cols-6 mb-6 dashboard-grid-stagger">
-                {kpis.map(({ label, value, icon: Icon, color, desc }) => (
-                    <Tooltip key={label}>
-                        <TooltipTrigger asChild>
-                            <div className="glass-card flex items-center gap-3 px-4 py-3 rounded-xl border border-border/60 hover:scale-[1.02] hover:shadow-lg transition-all duration-200 cursor-default"
-                                style={{ outline: `1px solid ${color}25` }}>
-                                <div className="p-1.5 rounded-lg shrink-0" style={{ background: `${color}18` }}>
-                                    <Icon className="size-4" style={{ color }} />
+            {loading ? (
+                <div className="flex items-center justify-center p-12 text-muted-foreground"><Database className="mr-2 animate-pulse" /> Loading storage data...</div>
+            ) : (
+                <>
+                <div className="grid gap-3 grid-cols-2 md:grid-cols-3 lg:grid-cols-6 mb-6 dashboard-grid-stagger">
+                    {kpis.map(({ label, value, icon: Icon, color, desc }) => (
+                        <Tooltip key={label}>
+                            <TooltipTrigger asChild>
+                                <div className="glass-card flex items-center gap-3 px-4 py-3 rounded-xl border border-border/60 hover:scale-[1.02] hover:shadow-lg transition-all duration-200 cursor-default"
+                                    style={{ outline: `1px solid ${color}25` }}>
+                                    <div className="p-1.5 rounded-lg shrink-0" style={{ background: `${color}18` }}>
+                                        <Icon className="size-4" style={{ color }} />
+                                    </div>
+                                    <div className="min-w-0">
+                                        <p className="text-[10px] text-muted-foreground font-medium">{label}</p>
+                                        <p className="text-base font-bold tabular-nums leading-none stat-glow" style={{ color }}>{value}</p>
+                                    </div>
                                 </div>
-                                <div className="min-w-0">
-                                    <p className="text-[10px] text-muted-foreground font-medium">{label}</p>
-                                    <p className="text-base font-bold tabular-nums leading-none stat-glow" style={{ color }}>{value}</p>
-                                </div>
-                            </div>
-                        </TooltipTrigger>
-                        <TooltipContent side="top" className="text-xs max-w-[180px]"><p>{desc}</p></TooltipContent>
-                    </Tooltip>
-                ))}
-            </div>
+                            </TooltipTrigger>
+                            <TooltipContent side="top" className="text-xs max-w-[180px]"><p>{desc}</p></TooltipContent>
+                        </Tooltip>
+                    ))}
+                </div>
 
             {/* ── Charts Row ── */}
             <div className="grid gap-5 lg:grid-cols-2 mb-6">
@@ -463,6 +396,8 @@ export default function Storage() {
                     </Table>
                 </CardContent>
             </Card>
+            </>
+            )}
         </TooltipProvider>
     );
 }

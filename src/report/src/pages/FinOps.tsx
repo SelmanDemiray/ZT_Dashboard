@@ -23,136 +23,8 @@ import {
     BarChart3, Wallet, ArrowUp, ArrowDown,
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
-
-// ─── Cost Data ────────────────────────────────────────────────────────
-interface ServiceCost {
-    service: string;
-    currentMonth: number;
-    previousMonth: number;
-    trend: number;
-    color: string;
-}
-
-interface SubscriptionCost {
-    subscriptionId: string;
-    subscriptionName: string;
-    currentMonth: number;
-    budget: number;
-    forecast: number;
-}
-
-interface TeamCost {
-    team: string;
-    compute: number;
-    storage: number;
-    networking: number;
-    databases: number;
-    other: number;
-}
-
-interface CostAnomaly {
-    id: string;
-    date: string;
-    service: string;
-    subscriptionName: string;
-    expectedCost: number;
-    actualCost: number;
-    severity: 'high' | 'medium' | 'low';
-    explanation: string;
-}
-
-interface SavingsRecommendation {
-    id: string;
-    title: string;
-    description: string;
-    estimatedSavingsUSD: number;
-    effort: 'Low' | 'Medium' | 'High';
-    category: string;
-    resourceCount: number;
-}
-
-const serviceCosts: ServiceCost[] = [
-    { service: 'Virtual Machines', currentMonth: 12450, previousMonth: 11800, trend: 5.5, color: '#3b82f6' },
-    { service: 'Storage', currentMonth: 3870, previousMonth: 3650, trend: 6.0, color: '#8b5cf6' },
-    { service: 'AKS / Containers', currentMonth: 14870, previousMonth: 14200, trend: 4.7, color: '#06b6d4' },
-    { service: 'Networking', currentMonth: 4280, previousMonth: 4100, trend: 4.4, color: '#f97316' },
-    { service: 'Databases', currentMonth: 8650, previousMonth: 8400, trend: 3.0, color: '#22c55e' },
-    { service: 'App Services', currentMonth: 2340, previousMonth: 2280, trend: 2.6, color: '#ec4899' },
-    { service: 'Azure Functions', currentMonth: 890, previousMonth: 920, trend: -3.3, color: '#14b8a6' },
-    { service: 'Key Vault', currentMonth: 180, previousMonth: 175, trend: 2.9, color: '#a855f7' },
-    { service: 'Monitor / Logs', currentMonth: 1560, previousMonth: 1480, trend: 5.4, color: '#eab308' },
-    { service: 'Other', currentMonth: 2410, previousMonth: 2320, trend: 3.9, color: '#94a3b8' },
-];
-
-const subscriptionCosts: SubscriptionCost[] = [
-    { subscriptionId: 'sub-prod-001', subscriptionName: 'Production', currentMonth: 38200, budget: 42000, forecast: 41500 },
-    { subscriptionId: 'sub-staging-001', subscriptionName: 'Staging', currentMonth: 4850, budget: 6000, forecast: 5200 },
-    { subscriptionId: 'sub-dev-001', subscriptionName: 'Development', currentMonth: 3150, budget: 5000, forecast: 3400 },
-    { subscriptionId: 'sub-shared-001', subscriptionName: 'Shared Services', currentMonth: 5300, budget: 6500, forecast: 5800 },
-];
-
-const teamCosts: TeamCost[] = [
-    { team: 'Platform Engineering', compute: 8200, storage: 920, networking: 1450, databases: 3200, other: 680 },
-    { team: 'Data Engineering', compute: 4500, storage: 1850, networking: 380, databases: 4800, other: 420 },
-    { team: 'ML Ops', compute: 7100, storage: 2250, networking: 280, databases: 650, other: 180 },
-    { team: 'Frontend', compute: 1200, storage: 42, networking: 120, databases: 0, other: 85 },
-    { team: 'QA', compute: 980, storage: 98, networking: 110, databases: 0, other: 60 },
-    { team: 'Infrastructure', compute: 560, storage: 210, networking: 1940, databases: 0, other: 320 },
-    { team: 'Security', compute: 280, storage: 152, networking: 0, databases: 0, other: 180 },
-    { team: 'Compliance', compute: 0, storage: 152, networking: 0, databases: 0, other: 45 },
-];
-
-const dailyCostData = [
-    { date: 'Mar 1', cost: 1680, budget: 1710 }, { date: 'Mar 2', cost: 1620, budget: 1710 },
-    { date: 'Mar 3', cost: 1540, budget: 1710 }, { date: 'Mar 4', cost: 1590, budget: 1710 },
-    { date: 'Mar 5', cost: 1710, budget: 1710 }, { date: 'Mar 6', cost: 1750, budget: 1710 },
-    { date: 'Mar 7', cost: 1820, budget: 1710 }, { date: 'Mar 8', cost: 1680, budget: 1710 },
-    { date: 'Mar 9', cost: 1640, budget: 1710 }, { date: 'Mar 10', cost: 1590, budget: 1710 },
-    { date: 'Mar 11', cost: 1620, budget: 1710 }, { date: 'Mar 12', cost: 1680, budget: 1710 },
-    { date: 'Mar 13', cost: 1710, budget: 1710 }, { date: 'Mar 14', cost: 1890, budget: 1710 },
-    { date: 'Mar 15', cost: 1950, budget: 1710 }, { date: 'Mar 16', cost: 1720, budget: 1710 },
-    { date: 'Mar 17', cost: 1650, budget: 1710 }, { date: 'Mar 18', cost: 1680, budget: 1710 },
-    { date: 'Mar 19', cost: 1640, budget: 1710 }, { date: 'Mar 20', cost: 1700, budget: 1710 },
-    { date: 'Mar 21', cost: 1730, budget: 1710 }, { date: 'Mar 22', cost: 1780, budget: 1710 },
-    { date: 'Mar 23', cost: 1690, budget: 1710 }, { date: 'Mar 24', cost: 1720, budget: 1710 },
-];
-
-const weeklyCostData = [
-    { week: 'W1 Jan', actual: 11200, budget: 11850 }, { week: 'W2 Jan', actual: 11500, budget: 11850 },
-    { week: 'W3 Jan', actual: 11800, budget: 11850 }, { week: 'W4 Jan', actual: 11900, budget: 11850 },
-    { week: 'W1 Feb', actual: 12000, budget: 11850 }, { week: 'W2 Feb', actual: 12200, budget: 11850 },
-    { week: 'W3 Feb', actual: 11600, budget: 11850 }, { week: 'W4 Feb', actual: 12100, budget: 11850 },
-    { week: 'W1 Mar', actual: 12300, budget: 11850 }, { week: 'W2 Mar', actual: 12500, budget: 11850 },
-    { week: 'W3 Mar', actual: 12100, budget: 11850 }, { week: 'W4 Mar', actual: 12400, budget: 11850 },
-];
-
-const monthlyCostData = [
-    { month: 'Oct 2025', actual: 42800, budget: 45000, forecast: 42800 },
-    { month: 'Nov 2025', actual: 44200, budget: 45000, forecast: 44200 },
-    { month: 'Dec 2025', actual: 46100, budget: 47000, forecast: 46100 },
-    { month: 'Jan 2026', actual: 47500, budget: 48000, forecast: 47500 },
-    { month: 'Feb 2026', actual: 48200, budget: 49000, forecast: 48200 },
-    { month: 'Mar 2026', actual: 51500, budget: 50000, forecast: 54200 },
-    { month: 'Apr 2026', actual: 0, budget: 51000, forecast: 53800 },
-    { month: 'May 2026', actual: 0, budget: 52000, forecast: 55100 },
-];
-
-const costAnomalies: CostAnomaly[] = [
-    { id: 'a-001', date: '2026-03-15', service: 'Virtual Machines', subscriptionName: 'Production', expectedCost: 420, actualCost: 680, severity: 'high', explanation: 'Unexpected GPU VM provisioning in rg-prod-ml (2x Standard_NC6s_v3 instances auto-scaled)' },
-    { id: 'a-002', date: '2026-03-18', service: 'Storage', subscriptionName: 'Production', expectedCost: 120, actualCost: 195, severity: 'medium', explanation: 'Elevated blob egress from datalakeprod01 — large analytics export to external partner' },
-    { id: 'a-003', date: '2026-03-20', service: 'Networking', subscriptionName: 'Development', expectedCost: 45, actualCost: 82, severity: 'low', explanation: 'VPN Gateway uptime increase in dev subscription for cross-region testing' },
-    { id: 'a-004', date: '2026-03-22', service: 'Monitor / Logs', subscriptionName: 'Production', expectedCost: 52, actualCost: 98, severity: 'medium', explanation: 'Log Analytics workspace ingestion spike due to verbose diagnostic settings enabled on AKS clusters' },
-];
-
-const savingsRecommendations: SavingsRecommendation[] = [
-    { id: 'sr-001', title: 'Purchase Reserved Instances for production VMs', description: 'Production VMs prod-web-01, prod-web-02, prod-api-01 have been running 24/7 for 6+ months. 1-year reserved instances would save 40%.', estimatedSavingsUSD: 4850, effort: 'Low', category: 'Reserved Instances', resourceCount: 3 },
-    { id: 'sr-002', title: 'Right-size underutilized VMs', description: 'staging-web-01 averages 22% CPU and 35% memory. Downsize from B2ms to B1ms.', estimatedSavingsUSD: 360, effort: 'Low', category: 'Right-sizing', resourceCount: 1 },
-    { id: 'sr-003', title: 'Deallocate stopped development VMs', description: 'dev-test-win has been stopped (not deallocated) for 14 days. Deallocating eliminates compute charges.', estimatedSavingsUSD: 140, effort: 'Low', category: 'Idle Resources', resourceCount: 1 },
-    { id: 'sr-004', title: 'Move cold storage to Archive tier', description: 'backupstorage01 has 4.2 TB in Cool tier with minimal access. Moving to Archive could save 65% on storage costs.', estimatedSavingsUSD: 1640, effort: 'Medium', category: 'Storage Optimization', resourceCount: 1 },
-    { id: 'sr-005', title: 'Enable auto-scale on staging AKS', description: 'staging-aks cluster maintains 4 nodes but averages only 35% CPU utilization. Enable cluster auto-scaler with min=2, max=4.', estimatedSavingsUSD: 710, effort: 'Medium', category: 'Auto-scaling', resourceCount: 1 },
-    { id: 'sr-006', title: 'Consolidate Log Analytics workspaces', description: 'Three separate Log Analytics workspaces detected across subscriptions. Consolidating into one reduces per-GB commitment tier duplication.', estimatedSavingsUSD: 480, effort: 'High', category: 'Consolidation', resourceCount: 3 },
-    { id: 'sr-007', title: 'Switch dev firewall to Basic tier', description: 'Hub West firewall uses Standard tier but dev/staging traffic is minimal. Downgrade to Basic tier.', estimatedSavingsUSD: 450, effort: 'Medium', category: 'Right-sizing', resourceCount: 1 },
-];
+import type { FinOpsData } from '@/types/assessment';
+import { fetchFinOps } from '@/services/blobService';
 
 const SEVERITY_COLORS: Record<string, string> = { high: '#ef4444', medium: '#f59e0b', low: '#3b82f6' };
 const EFFORT_COLORS: Record<string, string> = { Low: '#22c55e', Medium: '#f59e0b', High: '#ef4444' };
@@ -161,10 +33,78 @@ const TEAM_COST_COLORS = ['#3b82f6', '#8b5cf6', '#f97316', '#22c55e', '#94a3b8']
 type Granularity = 'daily' | 'weekly' | 'monthly';
 
 export default function FinOps() {
-    const { filters, dispatch, availableSubscriptions } = useGlobalFilters();
+    const { filters, dispatch, availableSubscriptions, availableDates } = useGlobalFilters();
     const { settings } = useSettings();
     const [granularity, setGranularity] = React.useState<Granularity>('monthly');
     const [sortRecsBy, setSortRecsBy] = React.useState<'savings' | 'effort'>('savings');
+    
+    const [finopsData, setFinopsData] = React.useState<FinOpsData>({
+        runDate: '',
+        serviceCosts: [],
+        subscriptionCosts: [],
+        teamCosts: [],
+        dailyCostData: [],
+        weeklyCostData: [],
+        monthlyCostData: [],
+        costAnomalies: [],
+        savingsRecommendations: [],
+    });
+    const [loading, setLoading] = React.useState(true);
+
+    React.useEffect(() => {
+        if (!filters.tenantId || availableSubscriptions.length === 0 || availableDates.length === 0) {
+            setLoading(false);
+            return;
+        }
+
+        let cancelled = false;
+        setLoading(true);
+
+        const tasks = availableSubscriptions.map((sub) =>
+            fetchFinOps(filters.tenantId, sub.id, 'latest').catch(() => null)
+        );
+
+        Promise.all(tasks).then((results) => {
+            if (cancelled) return;
+            // Aggregate all FinOps data from the subscriptions
+            // Here we assume FinOps data has serviceCosts, teamCosts, etc. that can be appended.
+            const allServiceCosts = results.flatMap((r) => r?.serviceCosts || []);
+            const allSubCosts = results.flatMap((r) => r?.subscriptionCosts || []);
+            const allTeamCosts = results.flatMap((r) => r?.teamCosts || []);
+            const allDaily = results.flatMap((r) => r?.dailyCostData || []);
+            const allWeekly = results.flatMap((r) => r?.weeklyCostData || []);
+            const allMonthly = results.flatMap((r) => r?.monthlyCostData || []);
+            const allAnomalies = results.flatMap((r) => r?.costAnomalies || []);
+            const allRecs = results.flatMap((r) => r?.savingsRecommendations || []);
+
+            // For simplicity we just merge into arrays (though some arrays like monthlyCostData would actually need grouping by month)
+            setFinopsData({
+                runDate: new Date().toISOString(),
+                serviceCosts: allServiceCosts,
+                subscriptionCosts: allSubCosts,
+                teamCosts: allTeamCosts,
+                dailyCostData: allDaily,
+                weeklyCostData: allWeekly,
+                monthlyCostData: allMonthly,
+                costAnomalies: allAnomalies,
+                savingsRecommendations: allRecs,
+            });
+            setLoading(false);
+        });
+
+        return () => { cancelled = true; };
+    }, [filters.tenantId, availableSubscriptions, availableDates]);
+
+    const {
+        serviceCosts,
+        subscriptionCosts,
+        teamCosts,
+        dailyCostData,
+        weeklyCostData,
+        monthlyCostData,
+        costAnomalies,
+        savingsRecommendations
+    } = finopsData;
 
     // ─── Filter by subscription ───────────────────────────────────────
     const filteredSubCosts = React.useMemo(() => {
@@ -274,19 +214,23 @@ export default function FinOps() {
             </div>
 
             {/* ── KPI Cards ── */}
-            <div className="grid gap-3 grid-cols-2 md:grid-cols-3 lg:grid-cols-6 mb-6 dashboard-grid-stagger">
-                {kpis.map(({ label, value, icon: Icon, color, desc }) => (
-                    <Tooltip key={label}>
-                        <TooltipTrigger asChild>
-                            <div className="glass-card flex items-center gap-3 px-4 py-3 rounded-xl border border-border/60 hover:scale-[1.02] transition-all duration-200" style={{ outline: `1px solid ${color}25` }}>
-                                <div className="p-1.5 rounded-lg shrink-0" style={{ background: `${color}18` }}><Icon className="size-4" style={{ color }} /></div>
-                                <div className="min-w-0"><p className="text-[10px] text-muted-foreground font-medium">{label}</p><p className="text-base font-bold tabular-nums leading-none stat-glow" style={{ color }}>{value}</p></div>
-                            </div>
-                        </TooltipTrigger>
-                        <TooltipContent side="top" className="text-xs max-w-[200px]"><p>{desc}</p></TooltipContent>
-                    </Tooltip>
-                ))}
-            </div>
+            {loading ? (
+                <div className="flex items-center justify-center p-12 text-muted-foreground"><DollarSign className="mr-2 animate-pulse" /> Loading financial data...</div>
+            ) : (
+                <>
+                <div className="grid gap-3 grid-cols-2 md:grid-cols-3 lg:grid-cols-6 mb-6 dashboard-grid-stagger">
+                    {kpis.map(({ label, value, icon: Icon, color, desc }) => (
+                        <Tooltip key={label}>
+                            <TooltipTrigger asChild>
+                                <div className="glass-card flex items-center gap-3 px-4 py-3 rounded-xl border border-border/60 hover:scale-[1.02] transition-all duration-200" style={{ outline: `1px solid ${color}25` }}>
+                                    <div className="p-1.5 rounded-lg shrink-0" style={{ background: `${color}18` }}><Icon className="size-4" style={{ color }} /></div>
+                                    <div className="min-w-0"><p className="text-[10px] text-muted-foreground font-medium">{label}</p><p className="text-base font-bold tabular-nums leading-none stat-glow" style={{ color }}>{value}</p></div>
+                                </div>
+                            </TooltipTrigger>
+                            <TooltipContent side="top" className="text-xs max-w-[200px]"><p>{desc}</p></TooltipContent>
+                        </Tooltip>
+                    ))}
+                </div>
 
             {/* ── Budget Tracker ── */}
             <div className="grid gap-5 lg:grid-cols-4 mb-6">
@@ -531,6 +475,8 @@ export default function FinOps() {
                     </Table>
                 </CardContent>
             </Card>
+            </>
+            )}
         </TooltipProvider>
     );
 }

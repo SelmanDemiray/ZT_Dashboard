@@ -5,7 +5,7 @@ import {
     BarChart, Bar, XAxis, YAxis, Tooltip as ReTooltip, Cell,
 } from 'recharts';
 import { ChartContainer } from '@/components/ui/chart';
-import { Shield, ChevronDown, ChevronUp, Zap, Filter, Info, ExternalLink, Server, FolderOpen } from 'lucide-react';
+import { Shield, ChevronDown, ChevronUp, Zap, Filter, Info, ExternalLink, Server, FolderOpen, Maximize2 } from 'lucide-react';
 import type { DefenderRecs, Severity } from '@/types/assessment';
 import type { TenantSubscription, RunSnapshot } from '@/types/assessment';
 import {
@@ -15,6 +15,7 @@ import {
     TooltipTrigger,
 } from '@/components/ui/tooltip';
 import { FilterDropdown } from '@/components/ui/FilterDropdown';
+import { Dialog, DialogContent, DialogTrigger, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 
 interface SubDataEntry {
     sub: TenantSubscription;
@@ -26,6 +27,8 @@ interface Props {
     subscriptions: TenantSubscription[];
     subDataMap: Record<string, SubDataEntry>;
     defaultSubId: string;
+    expanded?: boolean;
+    onToggleExpanded?: () => void;
 }
 
 const SEVERITY_CONFIG: Record<Severity, { label: string; color: string; bg: string }> = {
@@ -46,8 +49,10 @@ const CustomBarTooltip = ({ active, payload }: { active?: boolean; payload?: Arr
     );
 };
 
-export function DefenderCard({ subscriptions, subDataMap, defaultSubId }: Props) {
-    const [expanded, setExpanded] = useState(false);
+export function DefenderCard({ subscriptions, subDataMap, defaultSubId, expanded: propExpanded, onToggleExpanded }: Props) {
+    const [localExpanded, setLocalExpanded] = useState(false);
+    const expanded = propExpanded !== undefined ? propExpanded : localExpanded;
+    const toggleExpanded = onToggleExpanded || (() => setLocalExpanded(v => !v));
     const [subId, setSubId] = useState(defaultSubId || subscriptions[0]?.id || '');
     const [rgFilter, setRgFilter] = useState('');
     const [sevFilter, setSevFilter] = useState<Severity | ''>('');
@@ -116,10 +121,10 @@ export function DefenderCard({ subscriptions, subDataMap, defaultSubId }: Props)
         <TooltipProvider delayDuration={150}>
             <div
                 className={`glass-card gradient-border scan-line cursor-pointer transition-all duration-300 hover:shadow-lg hover:-translate-y-1 hover:border-border/60 ${hasCritical ? 'glow-warning' : ''}`}
-                onClick={() => setExpanded(v => !v)}
+                onClick={() => toggleExpanded()}
                 role="button"
                 tabIndex={0}
-                onKeyDown={(e) => e.key === 'Enter' && setExpanded(v => !v)}
+                onKeyDown={(e) => e.key === 'Enter' && toggleExpanded()}
             >
                 {/* ─── Header ─── */}
                 <div className="flex items-start justify-between px-5 pt-5 pb-3 gap-2">
@@ -139,9 +144,75 @@ export function DefenderCard({ subscriptions, subDataMap, defaultSubId }: Props)
                             </p>
                         </div>
                     </div>
-                    <span className="text-muted-foreground shrink-0">
-                        {expanded ? <ChevronUp className="size-4" /> : <ChevronDown className="size-4" />}
-                    </span>
+                    <div className="flex items-center gap-1.5" onClick={e => e.stopPropagation()}>
+                        <Dialog>
+                            <DialogTrigger asChild>
+                                <button className="text-muted-foreground hover:text-foreground transition-colors p-1 rounded-md hover:bg-muted" title="Maximize">
+                                    <Maximize2 className="size-3.5" />
+                                </button>
+                            </DialogTrigger>
+                            <DialogContent className="max-w-5xl h-[85vh] flex flex-col p-0 overflow-hidden bg-background/95 backdrop-blur border-muted z-50">
+                                <DialogHeader className="p-6 border-b flex-shrink-0">
+                                    <DialogTitle className="flex items-center gap-2">
+                                        <Shield className="size-5" style={{ color: accentColor }} />
+                                        Defender Recommendations
+                                    </DialogTitle>
+                                </DialogHeader>
+                                <div className="flex-1 overflow-y-auto p-6 space-y-6">
+                                    <div className="flex items-center gap-8 pb-6 border-b">
+                                        <ChartContainer
+                                            config={{ value: { label: 'Count' } }}
+                                            className="w-48 h-36 shrink-0"
+                                        >
+                                            <BarChart data={barData} layout="vertical" margin={{ left: 0, right: 10, top: 2, bottom: 2 }}>
+                                                <XAxis type="number" hide />
+                                                <YAxis type="category" dataKey="name" width={60} tick={{ fontSize: 11 }} axisLine={false} tickLine={false} />
+                                                <Bar dataKey="value" radius={[0, 4, 4, 0]}>
+                                                    {barData.map((entry) => (
+                                                        <Cell key={`bar-${entry.name}`} fill={entry.color} />
+                                                    ))}
+                                                </Bar>
+                                                <ReTooltip content={<CustomBarTooltip />} cursor={{ fill: 'transparent' }} />
+                                            </BarChart>
+                                        </ChartContainer>
+                                        <div className="flex-1 space-y-4">
+                                            <div>
+                                                <div className="text-5xl font-bold tracking-tight tabular-nums stat-glow" style={{ color: accentColor }}>
+                                                    {stats.total}
+                                                </div>
+                                                <p className="text-sm text-muted-foreground">open recommendations</p>
+                                            </div>
+                                            {stats.attackPaths > 0 && (
+                                                <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-sm font-semibold"
+                                                    style={{ background: '#ef444418', color: '#ef4444', border: '1px solid #ef444430' }}>
+                                                    <Zap className="size-4 animate-pulse" />
+                                                    {stats.attackPaths} Attack Paths
+                                                </div>
+                                            )}
+                                            <div className="flex gap-4 mt-2">
+                                                {(Object.keys(SEVERITY_CONFIG) as Severity[]).map((sev) => (
+                                                    <div key={`modal-sev-${sev}`} className="flex items-center gap-2">
+                                                        <span className="w-2.5 h-2.5 rounded-full" style={{ background: SEVERITY_CONFIG[sev].color }} />
+                                                        <span className="text-sm font-medium">{SEVERITY_CONFIG[sev].label}: {stats.counts[sev]}</span>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div className="space-y-4">
+                                        <h4 className="font-semibold text-lg flex items-center gap-2">
+                                            <Shield className="size-5 text-muted-foreground" /> Recommendations List
+                                            <span className="ml-auto text-sm font-normal text-muted-foreground">{filteredRecs.length} available</span>
+                                        </h4>
+                                        <DefenderRecsList recs={filteredRecs} subscriptions={subscriptions} subId={subId} />
+                                    </div>
+                                </div>
+                            </DialogContent>
+                        </Dialog>
+                        <span className="text-muted-foreground shrink-0 p-1 rounded-md hover:bg-muted transition-colors cursor-pointer" onClick={(e) => { e.stopPropagation(); toggleExpanded(); }}>
+                            {expanded ? <ChevronUp className="size-4" /> : <ChevronDown className="size-4" />}
+                        </span>
+                    </div>
                 </div>
 
                 {/* ─── On-card filters ─── */}

@@ -8,8 +8,6 @@ import { TrendSparkCards as _TrendSparkCards } from './TrendSparkCards';
 import { SecurityScoreGauge as _SecurityScoreGauge } from './SecurityScoreGauge';
 
 import { PolicyExplorerCard as _PolicyExplorerCard } from './PolicyExplorerCard';
-import { RecommendationsCard as _RecommendationsCard } from './RecommendationsCard';
-import { GovernanceRulesCard as _GovernanceRulesCard } from './GovernanceRulesCard';
 import { StorageAccountsCard as _StorageAccountsCard } from './StorageAccountsCard';
 
 const ComplianceCard = memo(_ComplianceCard);
@@ -19,8 +17,6 @@ const TrendSparkCards = memo(_TrendSparkCards);
 const SecurityScoreGauge = memo(_SecurityScoreGauge);
 
 const PolicyExplorerCard = memo(_PolicyExplorerCard);
-const RecommendationsCard = memo(_RecommendationsCard);
-const GovernanceRulesCard = memo(_GovernanceRulesCard);
 const StorageAccountsCard = memo(_StorageAccountsCard);
 import { Skeleton } from '@/components/ui/skeleton';
 import type { RunSnapshot, TenantSubscription } from '@/types/assessment';
@@ -42,6 +38,9 @@ export function OverviewCards() {
 
     const [subDataMap, setSubDataMap] = useState<Record<string, SubscriptionData>>({});
     const [loading, setLoading] = useState(true);
+    const [cardsExpanded, setCardsExpanded] = useState(false);
+    
+    const handleToggleExpand = () => setCardsExpanded(v => !v);
 
     // Fetch data for all subscriptions so each card can pick its own
     useEffect(() => {
@@ -139,9 +138,9 @@ export function OverviewCards() {
                         <Skeleton className="h-[420px] rounded-3xl glass-card shimmer" />
                     </div>
 
-                    {/* 4. Recommendations, Governance detail & Storage Accounts — 2 column */ }
-                    <div className="grid gap-5 grid-cols-1 lg:grid-cols-2">
-                        {[0, 1, 2].map(i => <Skeleton key={i} className="h-[420px] rounded-3xl glass-card shimmer" />)}
+                    {/* 4. Support & Storage Accounts — 1 column */ }
+                    <div className="grid gap-5 grid-cols-1">
+                        {[0].map(i => <Skeleton key={i} className="h-[420px] rounded-3xl glass-card shimmer" />)}
                     </div>
 
                     {/* 5. Trend sparklines */}
@@ -163,16 +162,22 @@ export function OverviewCards() {
                             subscriptions={availableSubscriptions}
                             subDataMap={subDataMap}
                             defaultSubId={filters.subscriptionId}
+                            expanded={cardsExpanded}
+                            onToggleExpanded={handleToggleExpand}
                         />
                         <GovernanceCard
                             subscriptions={availableSubscriptions}
                             subDataMap={subDataMap}
                             defaultSubId={filters.subscriptionId}
+                            expanded={cardsExpanded}
+                            onToggleExpanded={handleToggleExpand}
                         />
                         <DefenderCard
                             subscriptions={availableSubscriptions}
                             subDataMap={subDataMap}
                             defaultSubId={filters.subscriptionId}
+                            expanded={cardsExpanded}
+                            onToggleExpanded={handleToggleExpand}
                         />
                     </div>
 
@@ -185,18 +190,8 @@ export function OverviewCards() {
                         />
                     </div>
 
-                    {/* 4. Recommendations & Governance detail — 2 column */}
-                    <div className="grid gap-5 grid-cols-1 lg:grid-cols-2 dashboard-grid-stagger">
-                        <RecommendationsCard
-                            subscriptions={availableSubscriptions}
-                            subDataMap={subDataMap}
-                            defaultSubId={filters.subscriptionId}
-                        />
-                        <GovernanceRulesCard
-                            subscriptions={availableSubscriptions}
-                            subDataMap={subDataMap}
-                            defaultSubId={filters.subscriptionId}
-                        />
+                    {/* 4. Storage Accounts — 1 column */}
+                    <div className="grid gap-5 grid-cols-1 dashboard-grid-stagger">
                         <StorageAccountsCard
                             subscriptions={availableSubscriptions}
                             subDataMap={subDataMap}

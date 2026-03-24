@@ -27,6 +27,7 @@ import {
 } from "@/components/ui/select"
 // import { Separator } from "@/components/ui/separator"
 import { useGlobalFilters } from "@/contexts/GlobalFilterContext";
+import { GlobalFilters } from "@/components/GlobalFilters";
 
 import { formatNumber, metricDescriptions } from "@/lib/format-utils";
 import { OverviewCards } from "@/components/overview-cards";
@@ -92,10 +93,16 @@ export default function Dashboard() {
     const hasMultipleTenants = availableTenants.length > 1;
 
     return (
-        <TooltipProvider delayDuration={200}>
-            {/* ── Hero: Tenant / Metrics / Assessment ── */}
-            <div className="w-full flex max-w-7xl flex-col gap-6 mt-12">
-                <div className="grid w-full gap-5 lg:grid-cols-3">
+        <>
+            {/* ── Global Filter Bar ── */}
+            <div className="-mx-4 md:-mx-8">
+                <GlobalFilters />
+            </div>
+            
+            <TooltipProvider delayDuration={200}>
+                {/* ── Hero: Tenant / Metrics / Assessment ── */}
+                <div className="w-full flex max-w-7xl flex-col gap-6 mt-6">
+                    <div className="grid w-full gap-5 lg:grid-cols-3">
 
                     {/* ── Tenant Info Card ── */}
                     <div className="glass-card gradient-border scan-line p-6 flex flex-col gap-4">
@@ -254,5 +261,6 @@ export default function Dashboard() {
             <OverviewCards />
 
         </TooltipProvider>
+        </>
     );
 }

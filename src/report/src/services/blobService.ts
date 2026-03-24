@@ -5,6 +5,7 @@ import type {
     DefenderRecs,
     Governance,
     StorageAccountsData,
+    FinOpsData,
     RunSnapshot,
 } from '@/types/assessment';
 
@@ -140,6 +141,18 @@ export async function fetchStorageAccounts(
     );
 }
 
+export async function fetchFinOps(
+    tenantId: string,
+    subscriptionId: string,
+    date: string,
+    noCache = false
+): Promise<FinOpsData> {
+    return fetchJson<FinOpsData>(
+        `${tenantId}/${subscriptionId}/${date}/finops.json`,
+        noCache
+    );
+}
+
 // ─── Default empty objects for missing data files ─────────────────────────────
 
 const EMPTY_ZERO_TRUST: ZeroTrust = {
@@ -162,6 +175,18 @@ const EMPTY_STORAGE_ACCOUNTS: StorageAccountsData = {
     runDate: '', accounts: [],
 };
 
+const EMPTY_FINOPS: FinOpsData = {
+    runDate: '',
+    serviceCosts: [],
+    subscriptionCosts: [],
+    teamCosts: [],
+    dailyCostData: [],
+    weeklyCostData: [],
+    monthlyCostData: [],
+    costAnomalies: [],
+    savingsRecommendations: [],
+};
+
 export async function fetchRunSnapshot(
     tenantId: string,
     subscriptionId: string,
@@ -176,6 +201,7 @@ export async function fetchRunSnapshot(
         fetchDefenderRecs(tenantId, subscriptionId, date, noCache),
         fetchGovernance(tenantId, subscriptionId, date, noCache),
         fetchStorageAccounts(tenantId, subscriptionId, date, noCache),
+        fetchFinOps(tenantId, subscriptionId, date, noCache),
     ]);
 
     const zeroTrust = results[0].status === 'fulfilled' ? results[0].value : { ...EMPTY_ZERO_TRUST, tenantId, runDate: date };
@@ -183,13 +209,14 @@ export async function fetchRunSnapshot(
     const defenderRecs = results[2].status === 'fulfilled' ? results[2].value : { ...EMPTY_DEFENDER_RECS, runDate: date };
     const governance = results[3].status === 'fulfilled' ? results[3].value : { ...EMPTY_GOVERNANCE, runDate: date };
     const storageAccounts = results[4].status === 'fulfilled' ? results[4].value : { ...EMPTY_STORAGE_ACCOUNTS, runDate: date };
+    const finops = results[5].status === 'fulfilled' ? results[5].value : { ...EMPTY_FINOPS, runDate: date };
 
     // If ALL files failed, throw so callers know there's truly no data
     if (results.every(r => r.status === 'rejected')) {
         throw new Error(`All data files missing for ${tenantId}/${subscriptionId}/${date}`);
     }
 
-    return { date, zeroTrust, policyCompliance, defenderRecs, governance, storageAccounts };
+    return { date, zeroTrust, policyCompliance, defenderRecs, governance, storageAccounts, finops };
 }
 
 export async function fetchAllSnapshots(
