@@ -550,4 +550,94 @@ catch {
     throw
 }
 
+# ───────────────────────────────────────────────────────────────────────────────
+# PART 3: STORAGE ACCOUNTS DATA COLLECTION (ARG)
+# ───────────────────────────────────────────────────────────────────────────────
+Write-Log "--- PART 3: Collecting Storage Accounts Data ---"
+
+try {
+    Ensure-AzSessionFresh
+    
+    $storageQuery = @"
+Resources
+| where type =~ 'microsoft.storage/storageaccounts'
+| extend tlsVersion = tostring(properties.minimumTlsVersion),
+         publicNetworkAccess = tostring(properties.publicNetworkAccess),
+         supportsHttpsTrafficOnly = tobool(properties.supportsHttpsTrafficOnly),
+         networkAclsDefaultAction = tostring(properties.networkAcls.defaultAction)
+| project id, name, resourceGroup, subscriptionId, location, tlsVersion, publicNetworkAccess, supportsHttpsTrafficOnly, networkAclsDefaultAction
+"@
+
+    $saRows      = @()
+    $saSkipToken = $null
+    do {
+        $saParams = @{
+            Query        = $storageQuery
+            First        = 1000
+            Subscription = $subIds
+            ErrorAction  = 'Stop'
+        }
+        if ($saSkipToken) { $saParams['SkipToken'] = $saSkipToken }
+
+        $saResults = Search-AzGraph @saParams
+        $saPage    = @(if ($saResults.PSObject.Properties.Name -contains 'Data') { $saResults.Data } else { $saResults })
+        $saRows   += $saPage
+        $saSkipToken = if ($saResults.PSObject.Properties.Name -contains 'SkipToken') { $saResults.SkipToken } else { $null }
+    } while ($saSkipToken)
+
+    Write-Log "ARG: found $($saRows.Count) Storage Accounts across $($subIds.Count) subscriptions."
+
+    # Group by subscription and upload
+    $saBySub = $saRows | Group-Object -Property subscriptionId
+    
+    # Process subscriptions that HAVE storage accounts
+    $processedSubs = @()
+    foreach ($group in $saBySub) {
+        $subId = $group.Name
+        if ([string]::IsNullOrWhiteSpace($subId)) { continue }
+        $processedSubs += $subId.ToLower()
+        
+        $accounts = @()
+        foreach ($row in $group.Group) {
+            $accounts += [ordered]@{
+                id = $row.id
+                name = $row.name
+                resourceGroup = $row.resourceGroup
+                subscriptionId = $row.subscriptionId
+                location = $row.location
+                tlsVersion = $row.tlsVersion
+                publicNetworkAccess = $row.publicNetworkAccess
+                supportsHttpsTrafficOnly = $row.supportsHttpsTrafficOnly
+                networkAclsDefaultAction = $row.networkAclsDefaultAction
+            }
+        }
+        
+        $saData = [ordered]@{ runDate = $today; accounts = $accounts }
+        
+        $blobBasePath   = "assessments/$targetTenantId/$subId/$today"
+        $blobLatestPath = "assessments/$targetTenantId/$subId/latest"
+        
+        Upload-JsonBlob -BlobPath "$blobBasePath/storage-accounts.json"   -Data $saData -Container $containerName
+        Upload-JsonBlob -BlobPath "$blobLatestPath/storage-accounts.json" -Data $saData -Container $containerName
+    }
+    
+    # Process subscriptions that HAVE NO storage accounts (upload empty lists so UI clears old data)
+    foreach ($subId in $subIds) {
+        if ($processedSubs -notcontains $subId.ToLower()) {
+            $saData = [ordered]@{ runDate = $today; accounts = @() }
+            $blobBasePath   = "assessments/$targetTenantId/$subId/$today"
+            $blobLatestPath = "assessments/$targetTenantId/$subId/latest"
+            
+            try {
+                Upload-JsonBlob -BlobPath "$blobBasePath/storage-accounts.json"   -Data $saData -Container $containerName
+                Upload-JsonBlob -BlobPath "$blobLatestPath/storage-accounts.json" -Data $saData -Container $containerName
+            } catch {}
+        }
+    }
+
+}
+catch {
+    Write-Log "Failed to collect storage accounts: $_" "ERROR"
+}
+
 Write-Log "=== Unified Verification Runbook Complete ==="

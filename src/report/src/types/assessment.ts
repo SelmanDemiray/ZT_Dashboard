@@ -126,6 +126,24 @@ export interface Governance {
   rules: GovernanceRule[];
 }
 
+// ─── Storage Accounts ─────────────────────────────────────────────────
+export interface StorageAccount {
+  id: string;
+  name: string;
+  resourceGroup: string;
+  subscriptionId: string;
+  location: string;
+  tlsVersion: string;
+  publicNetworkAccess: string;
+  supportsHttpsTrafficOnly: boolean;
+  networkAclsDefaultAction: string;
+}
+
+export interface StorageAccountsData {
+  runDate: string;
+  accounts: StorageAccount[];
+}
+
 // ─── Tenant Index ─────────────────────────────────────────────────────
 export interface TenantSubscription {
   id: string;
@@ -154,6 +172,12 @@ export interface GlobalFilterState {
   status: string;
   dateRange: [Date, Date];
   granularity: 'weekly' | 'monthly';
+  /** Selected operational-area group ID (from settings) */
+  operationalArea: string;
+  /** Selected team group ID (from settings) */
+  team: string;
+  /** Selected keyword group ID (from settings) */
+  keyword: string;
 }
 
 // ─── Trend-Specific Types ─────────────────────────────────────────────
@@ -248,4 +272,5 @@ export interface RunSnapshot {
   policyCompliance: PolicyCompliance;
   defenderRecs: DefenderRecs;
   governance: Governance;
+  storageAccounts: StorageAccountsData;
 }

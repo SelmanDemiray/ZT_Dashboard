@@ -1,10 +1,11 @@
 /* eslint-disable react-refresh/only-export-components */
 import { createContext, useContext, useReducer, useEffect, useCallback, useMemo, type ReactNode } from 'react';
 import type { GlobalFilterState, TenantIndex, TenantEntry, TenantSubscription } from '@/types/assessment';
-import type { ZeroTrustAssessmentReport } from '@/config/report-data';
+import type { ZeroTrustAssessmentReport, Test } from '@/config/report-data';
 import { reportData as staticReportData } from '@/config/report-data';
 import { fetchTenantIndex, fetchPolicyMapping } from '@/services/blobService';
 import { fetchReportData } from '@/services/reportDataService';
+import { useSettings } from './SettingsContext';
 
 // ─── Context shape ────────────────────────────────────────────────────
 
@@ -14,6 +15,8 @@ interface GlobalFilterContextValue {
     loading: boolean;
     /** Live report data from blob (falls back to static demo data if fetch fails). */
     reportData: ZeroTrustAssessmentReport;
+    /** Tests filtered by active operational area, team, and keyword filters. */
+    filteredTests: Test[];
     reportLoading: boolean;
     dispatch: React.Dispatch<FilterAction>;
     availableTenants: TenantEntry[];
@@ -35,6 +38,9 @@ const defaultFilters: GlobalFilterState = {
         new Date(),
     ],
     granularity: 'monthly',
+    operationalArea: '',
+    team: '',
+    keyword: '',
 };
 
 const GlobalFilterContext = createContext<GlobalFilterContextValue | null>(null);
@@ -49,7 +55,10 @@ type FilterAction =
     | { type: 'SET_SEVERITY'; severity: string }
     | { type: 'SET_STATUS'; status: string }
     | { type: 'SET_DATE_RANGE'; dateRange: [Date, Date] }
-    | { type: 'SET_GRANULARITY'; granularity: 'weekly' | 'monthly' };
+    | { type: 'SET_GRANULARITY'; granularity: 'weekly' | 'monthly' }
+    | { type: 'SET_OPERATIONAL_AREA'; operationalArea: string }
+    | { type: 'SET_TEAM'; team: string }
+    | { type: 'SET_KEYWORD'; keyword: string };
 
 function filterReducer(
     state: GlobalFilterState,
@@ -81,6 +90,12 @@ function filterReducer(
             return { ...state, dateRange: action.dateRange };
         case 'SET_GRANULARITY':
             return { ...state, granularity: action.granularity };
+        case 'SET_OPERATIONAL_AREA':
+            return { ...state, operationalArea: action.operationalArea };
+        case 'SET_TEAM':
+            return { ...state, team: action.team };
+        case 'SET_KEYWORD':
+            return { ...state, keyword: action.keyword };
         default:
             return state;
     }
@@ -95,6 +110,7 @@ export function GlobalFilterProvider({ children }: { children: ReactNode }) {
     const [liveReportData, setLiveReportData] = useReducerState<ZeroTrustAssessmentReport>(staticReportData);
     const [reportLoading, setReportLoading] = useReducerState<boolean>(true);
     const [policyMapping, setPolicyMapping] = useReducerState<Record<string, string>>({});
+    const { settings } = useSettings();
 
     useEffect(() => {
         let cancelled = false;
@@ -160,26 +176,103 @@ export function GlobalFilterProvider({ children }: { children: ReactNode }) {
 
     const availableTenants = useMemo(() => tenantIndex?.tenants ?? [], [tenantIndex]);
 
-    const availableSubscriptions = useMemo(() => 
-        availableTenants.find((t) => t.id === filters.tenantId)?.subscriptions ?? [],
-        [availableTenants, filters.tenantId]
-    );
+    const availableSubscriptions = useMemo(() => {
+        let subs = availableTenants.find((t) => t.id === filters.tenantId)?.subscriptions ?? [];
+        
+        const applyGroupFilter = (groupId: string, sourceGroups: any[]) => {
+            if (!groupId) return;
+            const group = sourceGroups.find(g => g.id === groupId);
+            if (group && group.subscriptions && group.subscriptions.length > 0) {
+                subs = subs.filter(s => group.subscriptions!.includes(s.id));
+            }
+        };
 
-    const availableResourceGroups = useMemo(() => 
-        availableSubscriptions.find((s) => s.id === filters.subscriptionId)?.resourceGroups ?? [],
-        [availableSubscriptions, filters.subscriptionId]
-    );
+        applyGroupFilter(filters.operationalArea, settings.operationalAreas);
+        applyGroupFilter(filters.team, settings.teams);
+        applyGroupFilter(filters.keyword, settings.keywords);
+
+        return subs;
+    }, [availableTenants, filters.tenantId, filters.operationalArea, filters.team, filters.keyword, settings]);
+
+    const availableResourceGroups = useMemo(() => {
+        let rgs = availableSubscriptions.find((s) => s.id === filters.subscriptionId)?.resourceGroups ?? [];
+        
+        const applyGroupFilter = (groupId: string, sourceGroups: any[]) => {
+            if (!groupId) return;
+            const group = sourceGroups.find(g => g.id === groupId);
+            if (group && group.resourceGroups && group.resourceGroups.length > 0) {
+                rgs = rgs.filter(rg => group.resourceGroups!.includes(rg));
+            }
+        };
+
+        applyGroupFilter(filters.operationalArea, settings.operationalAreas);
+        applyGroupFilter(filters.team, settings.teams);
+        applyGroupFilter(filters.keyword, settings.keywords);
+
+        return rgs;
+    }, [availableSubscriptions, filters.subscriptionId, filters.operationalArea, filters.team, filters.keyword, settings]);
 
     const availableDates = useMemo(() => 
         availableSubscriptions.find((s) => s.id === filters.subscriptionId)?.dates ?? [],
         [availableSubscriptions, filters.subscriptionId]
     );
 
+    // ─── Filtered tests ───────────────────────────────────────────────
+
+    const filteredTests = useMemo(() => {
+        let tests = liveReportData.Tests ?? [];
+
+        // Filter by operational area group
+        if (filters.operationalArea) {
+            const group = settings.operationalAreas.find(g => g.id === filters.operationalArea);
+            if (group && group.values.length > 0) {
+                const lowerVals = group.values.map(v => v.toLowerCase());
+                tests = tests.filter(t => {
+                    const pillar = (t.TestPillar ?? '').toLowerCase();
+                    const category = (t.TestCategory ?? '').toLowerCase();
+                    return lowerVals.some(v => pillar.includes(v) || category.includes(v));
+                });
+            }
+        }
+
+        // Filter by team group
+        if (filters.team) {
+            const group = settings.teams.find(g => g.id === filters.team);
+            if (group && group.values.length > 0) {
+                const lowerVals = group.values.map(v => v.toLowerCase());
+                tests = tests.filter(t => {
+                    const tags = (t.TestTags ?? []).map(tag => tag.toLowerCase());
+                    const appliesTo = (t.TestAppliesTo ?? []).map(a => a.toLowerCase());
+                    return lowerVals.some(v =>
+                        tags.some(tag => tag.includes(v)) ||
+                        appliesTo.some(a => a.includes(v))
+                    );
+                });
+            }
+        }
+
+        // Filter by keyword group
+        if (filters.keyword) {
+            const group = settings.keywords.find(g => g.id === filters.keyword);
+            if (group && group.values.length > 0) {
+                const lowerVals = group.values.map(v => v.toLowerCase());
+                tests = tests.filter(t => {
+                    const title = (t.TestTitle ?? '').toLowerCase();
+                    const desc = (t.TestDescription ?? '').toLowerCase();
+                    return lowerVals.some(v => title.includes(v) || desc.includes(v));
+                });
+            }
+        }
+
+        return tests;
+    }, [liveReportData.Tests, filters.operationalArea, filters.team, filters.keyword, settings]);
+
     const value: GlobalFilterContextValue = useMemo(() => ({
         filters,
         tenantIndex,
         loading,
         reportData: liveReportData,
+        filteredTests,
         reportLoading,
         dispatch,
         availableTenants,
@@ -192,6 +285,7 @@ export function GlobalFilterProvider({ children }: { children: ReactNode }) {
         tenantIndex,
         loading,
         liveReportData,
+        filteredTests,
         reportLoading,
         availableTenants,
         availableSubscriptions,

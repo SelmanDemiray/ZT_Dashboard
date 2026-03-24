@@ -1,4 +1,5 @@
 import { useGlobalFilters } from '@/contexts/GlobalFilterContext';
+import { useSettings } from '@/contexts/SettingsContext';
 import { cn } from '@/lib/utils';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 
@@ -11,6 +12,7 @@ export function GlobalFilters() {
         availableResourceGroups,
         loading,
     } = useGlobalFilters();
+    const { settings } = useSettings();
 
     if (loading) return null;
     if (availableTenants.length === 0) return null;
@@ -81,6 +83,48 @@ export function GlobalFilters() {
                     ]}
                     onChange={(v) => dispatch({ type: 'SET_STATUS', status: v === 'all' ? '' : v })}
                 />
+
+                {/* ── Settings-based filters ── */}
+                <div className="h-4 w-px bg-border/60 mx-1 hidden sm:block" />
+
+                {/* Operational Area */}
+                {settings.operationalAreas.length > 0 && (
+                    <FilterSelect
+                        label="Area"
+                        value={filters.operationalArea || 'all'}
+                        options={[
+                            { value: 'all', label: 'All Areas' },
+                            ...settings.operationalAreas.map((g) => ({ value: g.id, label: g.name })),
+                        ]}
+                        onChange={(v) => dispatch({ type: 'SET_OPERATIONAL_AREA', operationalArea: v === 'all' ? '' : v })}
+                    />
+                )}
+
+                {/* Team */}
+                {settings.teams.length > 0 && (
+                    <FilterSelect
+                        label="Team"
+                        value={filters.team || 'all'}
+                        options={[
+                            { value: 'all', label: 'All Teams' },
+                            ...settings.teams.map((g) => ({ value: g.id, label: g.name })),
+                        ]}
+                        onChange={(v) => dispatch({ type: 'SET_TEAM', team: v === 'all' ? '' : v })}
+                    />
+                )}
+
+                {/* Keyword */}
+                {settings.keywords.length > 0 && (
+                    <FilterSelect
+                        label="Keyword"
+                        value={filters.keyword || 'all'}
+                        options={[
+                            { value: 'all', label: 'All Keywords' },
+                            ...settings.keywords.map((g) => ({ value: g.id, label: g.name })),
+                        ]}
+                        onChange={(v) => dispatch({ type: 'SET_KEYWORD', keyword: v === 'all' ? '' : v })}
+                    />
+                )}
             </div>
         </div>
     );

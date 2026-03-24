@@ -6,13 +6,12 @@ import { lazy } from "react";
 
 const NoMatch = lazy(() => import("./pages/NoMatch"));
 const Dashboard = lazy(() => import("./pages/Dashboard"));
-const Identity = lazy(() => import("./pages/Identity"));
-const Devices = lazy(() => import("./pages/Devices"));
-const Apps = lazy(() => import("./pages/Apps"));
-const Network = lazy(() => import("./pages/Network"));
-const Infrastructure = lazy(() => import("./pages/Infrastructure"));
-const Data = lazy(() => import("./pages/Data"));
+const Storage = lazy(() => import("./pages/Storage"));
+const VmsContainers = lazy(() => import("./pages/VmsContainers"));
+const Networks = lazy(() => import("./pages/Networks"));
+const FinOps = lazy(() => import("./pages/FinOps"));
 const Trends = lazy(() => import("./pages/Trends"));
+const Settings = lazy(() => import("./pages/Settings"));
 
 export const router = createHashRouter([
     {
@@ -24,32 +23,28 @@ export const router = createHashRouter([
                 element: <Dashboard />,
             },
             {
-                path: "identity",
-                element: <Identity />,
+                path: "storage",
+                element: <Storage />,
             },
             {
-                path: "devices",
-                element: <Devices />,
+                path: "vms-containers",
+                element: <VmsContainers />,
             },
             {
-                path: "apps",
-                element: <Apps />,
+                path: "networks",
+                element: <Networks />,
             },
             {
-                path: "network",
-                element: <Network />,
-            },
-            {
-                path: "infrastructure",
-                element: <Infrastructure />,
-            },
-            {
-                path: "data",
-                element: <Data />,
+                path: "finops",
+                element: <FinOps />,
             },
             {
                 path: "trends",
                 element: <Trends />,
+            },
+            {
+                path: "settings",
+                element: <Settings />,
             },
         ],
     },

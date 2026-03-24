@@ -111,14 +111,14 @@ export interface ConfigDeviceAppProtectionPolicies {
 }
 
 export interface TestResultSummaryData {
-  IdentityPassed: number;
-  IdentityTotal: number;
-  DevicesPassed: number;
-  DevicesTotal: number;
-  DataPassed?: number;
-  DataTotal?: number;
-  NetworkPassed?: number;
-  NetworkTotal?: number;
+  StoragePassed: number;
+  StorageTotal: number;
+  VmsContainersPassed: number;
+  VmsContainersTotal: number;
+  NetworksPassed: number;
+  NetworksTotal: number;
+  FinOpsPassed: number;
+  FinOpsTotal: number;
 }
 export interface SankeyData {
   nodes: SankeyDataNode[];
@@ -239,27 +239,29 @@ export const reportData: ZeroTrustAssessmentReport = {
   "CurrentVersion": "0.18.0",
   "LatestVersion": "0.18.0",
   "TestResultSummary": {
-    "IdentityPassed": 0,
-    "IdentityTotal": 0,
-    "DevicesPassed": 1,
-    "DevicesTotal": 1,
-    "DataPassed": 0,
-    "DataTotal": 0
+    "StoragePassed": 12,
+    "StorageTotal": 15,
+    "VmsContainersPassed": 18,
+    "VmsContainersTotal": 20,
+    "NetworksPassed": 24,
+    "NetworksTotal": 30,
+    "FinOpsPassed": 8,
+    "FinOpsTotal": 10
   },
   "Tests": [
     {
       "TestId": "24546",
       "TestResult": "\nWindows Automatic Enrollment is enabled.\n\n\n## Windows Automatic Enrollment\n\n| Policy Name | User Scope |\n| :---------- | :--------- |\n| [Microsoft Intune](https://intune.microsoft.com/#view/Microsoft_AAD_IAM/MdmConfiguration.ReactView/appId/0000000a-0000-0000-c000-000000000000/appName/Microsoft%20Intune) | ✅ Specific Groups |\n\n\n\n",
-      "TestDescription": "If Windows automatic enrollment isn't enabled, unmanaged devices can become an entry point for attackers. Threat actors might use these devices to access corporate data, bypass compliance policies, and introduce vulnerabilities into the environment. Devices joined to Microsoft Entra without Intune enrollment create gaps in visibility and control. These unmanaged endpoints can expose weaknesses in the operating system or misconfigured applications that attackers can exploit.\n\nEnforcing automatic enrollment ensures Windows devices are managed from the start, enabling consistent policy enforcement and visibility into compliance. This supports Zero Trust by ensuring all devices are verified, monitored, and governed by security controls.\n\n**Remediation action**\n\nEnable automatic enrollment for Windows devices using Intune and Microsoft Entra to ensure all domain-joined or Entra-joined devices are managed:  \n- [Enable Windows automatic enrollment](https://learn.microsoft.com/intune/intune-service/enrollment/windows-enroll?wt.mc_id=zerotrustrecommendations_automation_content_cnl_csasci#enable-windows-automatic-enrollment)\n\nFor more information, see:  \n- [Deployment guide - Enrollment for Windows](https://learn.microsoft.com/intune/intune-service/fundamentals/deployment-guide-enroll?tabs=work-profile%2Ccorporate-owned-apple%2Cautomatic-enrollment&wt.mc_id=zerotrustrecommendations_automation_content_cnl_csasci#enrollment-for-windows)\n",
+      "TestDescription": "Enforcing automatic enrollment ensures Windows devices are managed from the start, enabling consistent policy enforcement and visibility into compliance.",
       "TestSkipped": "",
-      "TestTitle": "Windows automatic device enrollment is enforced to eliminate risks from unmanaged endpoints",
+      "TestTitle": "Windows automatic device enrollment is enforced",
       "TestStatus": "Passed",
       "TestTags": null,
       "TestRisk": "High",
-      "TestPillar": "Devices",
+      "TestPillar": "VMs & Containers",
       "TestImpact": "Low",
       "TestSfiPillar": "Protect tenants and isolate production systems",
-      "TestCategory": "Devices",
+      "TestCategory": "VMs & Containers",
       "TestImplementationCost": "Low",
       "SkippedReason": null,
       "TestAppliesTo": null

@@ -6,20 +6,22 @@ import { GovernanceCard as _GovernanceCard } from './GovernanceCard';
 import { DefenderCard as _DefenderCard } from './DefenderCard';
 import { TrendSparkCards as _TrendSparkCards } from './TrendSparkCards';
 import { SecurityScoreGauge as _SecurityScoreGauge } from './SecurityScoreGauge';
-import { ComplianceDeepDiveCard as _ComplianceDeepDiveCard } from './ComplianceDeepDiveCard';
+
 import { PolicyExplorerCard as _PolicyExplorerCard } from './PolicyExplorerCard';
 import { RecommendationsCard as _RecommendationsCard } from './RecommendationsCard';
 import { GovernanceRulesCard as _GovernanceRulesCard } from './GovernanceRulesCard';
+import { StorageAccountsCard as _StorageAccountsCard } from './StorageAccountsCard';
 
 const ComplianceCard = memo(_ComplianceCard);
 const GovernanceCard = memo(_GovernanceCard);
 const DefenderCard = memo(_DefenderCard);
 const TrendSparkCards = memo(_TrendSparkCards);
 const SecurityScoreGauge = memo(_SecurityScoreGauge);
-const ComplianceDeepDiveCard = memo(_ComplianceDeepDiveCard);
+
 const PolicyExplorerCard = memo(_PolicyExplorerCard);
 const RecommendationsCard = memo(_RecommendationsCard);
 const GovernanceRulesCard = memo(_GovernanceRulesCard);
+const StorageAccountsCard = memo(_StorageAccountsCard);
 import { Skeleton } from '@/components/ui/skeleton';
 import type { RunSnapshot, TenantSubscription } from '@/types/assessment';
 import { Activity, Sparkles } from 'lucide-react';
@@ -133,13 +135,13 @@ export function OverviewCards() {
                     </div>
 
                     {/* 3. Deep-dive section */}
-                    <div className="grid gap-5 grid-cols-1 lg:grid-cols-2">
-                        {[0, 1].map(i => <Skeleton key={i} className="h-[420px] rounded-3xl glass-card shimmer" />)}
+                    <div className="grid gap-5 grid-cols-1">
+                        <Skeleton className="h-[420px] rounded-3xl glass-card shimmer" />
                     </div>
 
-                    {/* 4. Recommendations & Governance detail */}
+                    {/* 4. Recommendations, Governance detail & Storage Accounts — 2 column */ }
                     <div className="grid gap-5 grid-cols-1 lg:grid-cols-2">
-                        {[0, 1].map(i => <Skeleton key={i} className="h-[420px] rounded-3xl glass-card shimmer" />)}
+                        {[0, 1, 2].map(i => <Skeleton key={i} className="h-[420px] rounded-3xl glass-card shimmer" />)}
                     </div>
 
                     {/* 5. Trend sparklines */}
@@ -174,13 +176,8 @@ export function OverviewCards() {
                         />
                     </div>
 
-                    {/* 3. Deep-dive section — 2 column, compliance focused */}
-                    <div className="grid gap-5 grid-cols-1 lg:grid-cols-2 dashboard-grid-stagger">
-                        <ComplianceDeepDiveCard
-                            subscriptions={availableSubscriptions}
-                            subDataMap={subDataMap}
-                            defaultSubId={filters.subscriptionId}
-                        />
+                    {/* 3. Deep-dive section — policy explorer */}
+                    <div className="grid gap-5 grid-cols-1 dashboard-grid-stagger">
                         <PolicyExplorerCard
                             subscriptions={availableSubscriptions}
                             subDataMap={subDataMap}
@@ -196,6 +193,11 @@ export function OverviewCards() {
                             defaultSubId={filters.subscriptionId}
                         />
                         <GovernanceRulesCard
+                            subscriptions={availableSubscriptions}
+                            subDataMap={subDataMap}
+                            defaultSubId={filters.subscriptionId}
+                        />
+                        <StorageAccountsCard
                             subscriptions={availableSubscriptions}
                             subDataMap={subDataMap}
                             defaultSubId={filters.subscriptionId}
