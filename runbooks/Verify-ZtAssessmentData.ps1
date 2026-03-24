@@ -35,7 +35,7 @@ foreach ($sp in $standardPaths) {
 
 
 # ─── Module Validation ────────────────────────────────────────────────────────
-$requiredModules = @("Az.Accounts", "Az.ResourceGraph")
+$requiredModules = @("Az.Accounts", "Az.ResourceGraph", "Az.Resources")
 foreach ($mod in $requiredModules) {
     if (-not (Get-Module -Name $mod -ListAvailable)) {
         Write-Log "Required module '$mod' not found. Attempting import..." "WARN"
@@ -565,13 +565,13 @@ Resources
          publicNetworkAccess = tostring(properties.publicNetworkAccess),
          supportsHttpsTrafficOnly = tobool(properties.supportsHttpsTrafficOnly),
          networkAclsDefaultAction = tostring(properties.networkAcls.defaultAction),
-         kind = tostring(kind),
+         accountKind = tostring(kind),
          tier = tostring(sku.tier),
          redundancy = tostring(sku.name),
          accessTier = tostring(properties.accessTier),
-         encryption = properties.encryption.services.blob.enabled == true,
+         isEncrypted = tobool(properties.encryption.services.blob.enabled),
          createdDate = tostring(properties.creationTime)
-| project id, name, resourceGroup, subscriptionId, location, tlsVersion, publicNetworkAccess, supportsHttpsTrafficOnly, networkAclsDefaultAction, kind, tier, redundancy, accessTier, encryption, createdDate, tags
+| project id, name, resourceGroup, subscriptionId, location, tlsVersion, publicNetworkAccess, supportsHttpsTrafficOnly, networkAclsDefaultAction, kind=accountKind, tier, redundancy, accessTier, encryption=isEncrypted, createdDate, tags
 "@
 
     $saRows      = @()
