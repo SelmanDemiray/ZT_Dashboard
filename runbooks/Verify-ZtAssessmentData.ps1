@@ -178,6 +178,33 @@ function Ensure-AzSessionFresh {
 }
 
 
+function Invoke-WithRetry {
+    param(
+        [Parameter(Mandatory=$true)]
+        [scriptblock]$Action,
+        [int]$MaxRetries = 3
+    )
+    $attempt = 1
+    while ($true) {
+        try {
+            return & $Action
+            break
+        } catch {
+            $msg = $_.Exception.Message
+            if ($msg -match '429|Too Many Requests') {
+                if ($attempt -ge $MaxRetries) { throw }
+                $sleepSecs = $attempt * 5
+                Write-Log "  [WARN] Rate limit (429) hit. Retrying in $sleepSecs seconds... (Attempt $attempt/$MaxRetries)" "WARN"
+                Start-Sleep -Seconds $sleepSecs
+                $attempt++
+            } else {
+                throw
+            }
+        }
+    }
+}
+
+
 # ─── Safe ARG display-name extractor ──────────────────────────────────────────
 # FIX #4: ARG returns properties.displayName as a JToken/dynamic type.
 # Calling .ToString() on a null JToken throws; use this helper everywhere.
@@ -364,8 +391,12 @@ $missingLog  = @()
             }
             catch {
                 $msg = $_.Exception.Message
-                Write-Log " -> Call failed for '$propName': $msg" "ERROR"
-                $missingLog += [ordered]@{ Timestamp = $dateString; Component = $propName; Endpoint = $endpoint; Error = $msg }
+                if ($msg -match '401|403|Unauthorized|Forbidden') {
+                    Write-Log " -> Access denied or lacking permissions for '$propName' (API App-Only restrictions). Skipping." "INFO"
+                } else {
+                    Write-Log " -> Call failed for '$propName': $msg" "WARN"
+                    $missingLog += [ordered]@{ Timestamp = $dateString; Component = $propName; Endpoint = $endpoint; Error = $msg }
+                }
             }
         } else {
             Write-Log "Data exists for '$propName'. Skipping."
@@ -436,7 +467,8 @@ try {
                         }
                     }
                 }
-                $nextLink = if ($resp.nextLink) { $resp.nextLink } else { $null }
+                $nextLink = $null
+                try { $nextLink = $resp.nextLink } catch {}
             }
         } catch {
             Write-Log "  [WARN] Failed to fetch REST API policies from $Uri : $($_.Exception.Message)" "WARN"
@@ -454,10 +486,12 @@ try {
         Fetch-ArmPolicies "https://management.azure.com/subscriptions/$($sub.Id)/providers/Microsoft.Authorization/policySetDefinitions?api-version=2021-06-01" 'set'
     }
 
-    $mgs = @(Get-AzManagementGroup -ErrorAction SilentlyContinue)
-    foreach ($mg in $mgs) {
-        Fetch-ArmPolicies "https://management.azure.com/providers/Microsoft.Management/managementGroups/$($mg.Name)/providers/Microsoft.Authorization/policyDefinitions?api-version=2021-06-01" 'policy'
-        Fetch-ArmPolicies "https://management.azure.com/providers/Microsoft.Management/managementGroups/$($mg.Name)/providers/Microsoft.Authorization/policySetDefinitions?api-version=2021-06-01" 'set'
+    $mgResp = Invoke-RestMethod -Uri "https://management.azure.com/providers/Microsoft.Management/managementGroups?api-version=2020-05-01" -Headers $headers -Method GET -ErrorAction SilentlyContinue
+    if ($mgResp -and $mgResp.value) {
+        foreach ($mg in $mgResp.value) {
+            Fetch-ArmPolicies "https://management.azure.com/providers/Microsoft.Management/managementGroups/$($mg.name)/providers/Microsoft.Authorization/policyDefinitions?api-version=2021-06-01" 'policy'
+            Fetch-ArmPolicies "https://management.azure.com/providers/Microsoft.Management/managementGroups/$($mg.name)/providers/Microsoft.Authorization/policySetDefinitions?api-version=2021-06-01" 'set'
+        }
     }
 
     Write-Log "ARM REST API: mapped $($mapping.policies.Keys.Count) Policies and $($mapping.policySets.Keys.Count) Policy Sets."
@@ -520,7 +554,7 @@ Resources
          accessTier = tostring(properties.accessTier),
          isEncrypted = tobool(properties.encryption.services.blob.enabled),
          createdDate = tostring(properties.creationTime)
-| project id, name, resourceGroup, subscriptionId, location, tlsVersion, publicNetworkAccess, supportsHttpsTrafficOnly, networkAclsDefaultAction, kind=accountKind, tier, redundancy, accessTier, encryption=isEncrypted, createdDate, tags
+| project id, name, resourceGroup, subscriptionId, location, tlsVersion, publicNetworkAccess, supportsHttpsTrafficOnly, networkAclsDefaultAction, accountKind, tier, redundancy, accessTier, isEncrypted, createdDate, tags
 "@
 
     $saRows      = @()
@@ -607,11 +641,11 @@ Resources
                 resourceGroup = $row.resourceGroup
                 region = $row.location
                 location = $row.location
-                kind = $row.kind
+                kind = $row.accountKind
                 tier = $row.tier
                 redundancy = $row.redundancy
                 accessTier = if ([string]::IsNullOrEmpty($row.accessTier)) { 'Hot' } else { $row.accessTier }
-                encryption = $row.encryption
+                encryption = $row.isEncrypted
                 httpsOnly = $row.supportsHttpsTrafficOnly
                 blobCapacityGB = $blobCap
                 fileCapacityGB = $fileCap
@@ -701,7 +735,8 @@ foreach ($subId in $subIds) {
 
         $curCosts = @{}
         try {
-            $cmResp = Invoke-RestMethod -Uri $cmUri -Headers $hdrs -Method POST -Body $cmBody -TimeoutSec 60 -ErrorAction Stop
+            Start-Sleep -Seconds 1
+            $cmResp = Invoke-WithRetry -Action { Invoke-RestMethod -Uri $cmUri -Headers $hdrs -Method POST -Body $cmBody -TimeoutSec 60 -ErrorAction Stop }
             foreach ($row in $cmResp.properties.rows) {
                 $svcName = $row[1]
                 $cost    = [math]::Round($row[0], 2)
@@ -716,6 +751,7 @@ foreach ($subId in $subIds) {
         # Previous month
         $prevCosts = @{}
         try {
+            Start-Sleep -Seconds 2
             $pmBody = @{
                 type = "ActualCost"
                 timeframe = "Custom"
@@ -726,7 +762,7 @@ foreach ($subId in $subIds) {
                     grouping = @(@{ type = "Dimension"; name = "ServiceName" })
                 }
             } | ConvertTo-Json -Depth 10
-            $pmResp = Invoke-RestMethod -Uri $cmUri -Headers $hdrs -Method POST -Body $pmBody -TimeoutSec 60 -ErrorAction Stop
+            $pmResp = Invoke-WithRetry -Action { Invoke-RestMethod -Uri $cmUri -Headers $hdrs -Method POST -Body $pmBody -TimeoutSec 60 -ErrorAction Stop }
             foreach ($row in $pmResp.properties.rows) {
                 $prevCosts[$row[1]] = [math]::Round($row[0], 2)
             }
@@ -761,6 +797,7 @@ foreach ($subId in $subIds) {
         # ── Daily cost data (current month) ──
         $dailyCostData = @()
         try {
+            Start-Sleep -Seconds 2
             $dBody = @{
                 type = "ActualCost"
                 timeframe = "Custom"
@@ -770,10 +807,17 @@ foreach ($subId in $subIds) {
                     aggregation = @{ totalCost = @{ name = "Cost"; function = "Sum" } }
                 }
             } | ConvertTo-Json -Depth 10
-            $dResp = Invoke-RestMethod -Uri $cmUri -Headers $hdrs -Method POST -Body $dBody -TimeoutSec 60 -ErrorAction Stop
+            $dResp = Invoke-WithRetry -Action { Invoke-RestMethod -Uri $cmUri -Headers $hdrs -Method POST -Body $dBody -TimeoutSec 60 -ErrorAction Stop }
             foreach ($row in $dResp.properties.rows) {
+                $rowStr = $row[1].ToString()
+                $pDate = $null
+                try {
+                    if ($rowStr -match '^\d{8}$') { $pDate = [datetime]::ParseExact($rowStr, 'yyyyMMdd', $null) }
+                    elseif ($rowStr -match '^\d{6}$') { $pDate = [datetime]::ParseExact($rowStr, 'yyyyMM', $null) }
+                    else { $pDate = [datetime]::Parse($rowStr.Split('T')[0].Split(' ')[0]) }
+                } catch { $pDate = Get-Date }
                 $dailyCostData += @{
-                    date   = ([datetime]::ParseExact($row[1].ToString().Substring(0,8), "yyyyMMdd", $null)).ToString("MMM dd")
+                    date   = $pDate.ToString("MMM dd")
                     cost   = [math]::Round($row[0], 2)
                     budget = [math]::Round(($subBudget / $daysInMonth), 2)
                 }
@@ -826,6 +870,7 @@ foreach ($subId in $subIds) {
         # ── Monthly cost data (last 6 months) ──
         $monthlyCostData = @()
         try {
+            Start-Sleep -Seconds 2
             $sixMonthsAgo = (Get-Date -Day 1).AddMonths(-5).ToString("yyyy-MM-dd")
             $mBody = @{
                 type = "ActualCost"
@@ -836,9 +881,15 @@ foreach ($subId in $subIds) {
                     aggregation = @{ totalCost = @{ name = "Cost"; function = "Sum" } }
                 }
             } | ConvertTo-Json -Depth 10
-            $mResp = Invoke-RestMethod -Uri $cmUri -Headers $hdrs -Method POST -Body $mBody -TimeoutSec 60 -ErrorAction Stop
+            $mResp = Invoke-WithRetry -Action { Invoke-RestMethod -Uri $cmUri -Headers $hdrs -Method POST -Body $mBody -TimeoutSec 60 -ErrorAction Stop }
             foreach ($row in $mResp.properties.rows) {
-                $monthDate = [datetime]::ParseExact($row[1].ToString().Substring(0,8), "yyyyMMdd", $null)
+                $rowStr = $row[1].ToString()
+                $monthDate = $null
+                try {
+                    if ($rowStr -match '^\d{8}$') { $monthDate = [datetime]::ParseExact($rowStr, 'yyyyMMdd', $null) }
+                    elseif ($rowStr -match '^\d{6}$') { $monthDate = [datetime]::ParseExact($rowStr, 'yyyyMM', $null) }
+                    else { $monthDate = [datetime]::Parse($rowStr.Split('T')[0].Split(' ')[0]) }
+                } catch { $monthDate = Get-Date -Day 1 }
                 $monthlyCostData += @{
                     month    = $monthDate.ToString("MMM yyyy")
                     actual   = [math]::Round($row[0], 2)
@@ -854,6 +905,7 @@ foreach ($subId in $subIds) {
         # ── Team Costs (by Resource Group) ──
         $teamCosts = @()
         try {
+            Start-Sleep -Seconds 2
             $rgBody = @{
                 type = "ActualCost"
                 timeframe = "Custom"
@@ -864,7 +916,7 @@ foreach ($subId in $subIds) {
                     grouping = @(@{ type = "Dimension"; name = "ResourceGroupName" }, @{ type = "Dimension"; name = "MeterCategory" })
                 }
             } | ConvertTo-Json -Depth 10
-            $rgResp = Invoke-RestMethod -Uri $cmUri -Headers $hdrs -Method POST -Body $rgBody -TimeoutSec 60 -ErrorAction Stop
+            $rgResp = Invoke-WithRetry -Action { Invoke-RestMethod -Uri $cmUri -Headers $hdrs -Method POST -Body $rgBody -TimeoutSec 60 -ErrorAction Stop }
             
             $rgMap = @{}
             foreach ($row in $rgResp.properties.rows) {
@@ -904,9 +956,8 @@ foreach ($subId in $subIds) {
             foreach ($adv in $advItems) {
                 $props = $adv.properties
                 $savings = 0
-                if ($props.extendedProperties -and $props.extendedProperties.savingsAmount) {
-                    $savings = [math]::Round([double]$props.extendedProperties.savingsAmount, 2)
-                }
+                $savings = 0
+                try { $savings = [math]::Round([double]$props.extendedProperties.savingsAmount, 2) } catch {}
                 $savingsRecs += @{
                     id                  = $adv.name
                     title               = if ($props.shortDescription.solution) { $props.shortDescription.solution } else { $adv.name }
@@ -1374,17 +1425,16 @@ try {
                     foreach ($grp in $apiGrouped) {
                         $first = $grp.Group[0]
                         $props = $first.properties
-                        $meta  = $props.metadata
+                        $meta = $null; try { $meta = $props.metadata } catch {}
+                        $severity = "low"; try { $severity = $meta.severity.ToString().ToLower() } catch {}
+                        $category = "Compute"; try { if ($meta.categories.Count -gt 0) { $category = $meta.categories[0] } } catch {}
                         
-                        $severity = if ($meta.severity) { $meta.severity.ToString().ToLower() } else { "low" }
-                        $category = "Compute"
-                        if ($meta.categories -and $meta.categories.Count -gt 0) { $category = $meta.categories[0] }
-                        
-                        $recName  = if ($props.displayName) { $props.displayName } else { $first.name }
+                        $recName  = if ($props.PSObject.Properties.Match('displayName').Count -gt 0) { $props.displayName } else { $first.name }
                         
                         $affected = @()
                         foreach ($row in $grp.Group) {
-                            $resId = if ($row.properties.resourceDetails.Id) { $row.properties.resourceDetails.Id } else { "" }
+                            $resDetails = if ($row.properties.PSObject.Properties.Match('resourceDetails').Count -gt 0) { $row.properties.resourceDetails } else { $null }
+                            $resId = if ($resDetails -and $resDetails.PSObject.Properties.Match('Id').Count -gt 0) { $resDetails.Id } else { "" }
                             $resName = if ($resId) { ($resId -split '/')[-1] } else { "Unknown" }
                             $resType = "Unknown"
                             if ($resId -match '/providers/([^/]+/[^/]+)/') { $resType = $Matches[1] }
@@ -1400,15 +1450,15 @@ try {
                         $apiRecs += [ordered]@{
                             id                     = $first.name
                             name                   = $recName
-                            description            = if ($meta.description) { $meta.description } else { "" }
+                            description            = if ($meta -and $meta.PSObject.Properties.Match('description').Count -gt 0) { $meta.description } else { "" }
                             severity               = $severity
                             category               = $category
                             subscriptionId         = $s
                             resourceCount          = $grp.Group.Count
-                            hasAttackPath          = if ($props.additionalData.hasAttackPaths) { [bool]$props.additionalData.hasAttackPaths } else { $false }
+                            hasAttackPath          = $false; try { if ($props.additionalData.hasAttackPaths) { $hasAttackPath = [bool]$props.additionalData.hasAttackPaths } } catch {}
                             affectedResources      = $affected
-                            remediation            = if ($meta.remediationDescription) { $meta.remediationDescription } else { "" }
-                            learnMoreUrl           = if ($meta.customAssurance) { $meta.customAssurance } else { "" }
+                            remediation            = ""; try { $remediation = $meta.remediationDescription } catch {}
+                            learnMoreUrl           = ""; try { $learnMoreUrl = $meta.customAssurance } catch {}
                             governanceAssignmentId = ""
                         }
                     }
