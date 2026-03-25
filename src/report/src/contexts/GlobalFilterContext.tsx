@@ -13,7 +13,7 @@ interface GlobalFilterContextValue {
     filters: GlobalFilterState;
     tenantIndex: TenantIndex | null;
     loading: boolean;
-    /** Live report data from blob (falls back to static demo data if fetch fails). */
+    /** Live report data from blob (falls back to an empty state if fetch fails). */
     reportData: ZeroTrustAssessmentReport;
     /** Tests filtered by active operational area, team, and keyword filters. */
     filteredTests: Test[];
@@ -128,22 +128,17 @@ export function GlobalFilterProvider({ children }: { children: ReactNode }) {
                 setTenantIndex(data);
                 if (data.tenants.length > 0) {
                     dispatch({ type: 'SET_TENANT', tenantId: data.tenants[0].id });
-                    if (data.tenants[0].subscriptions.length > 0) {
-                        dispatch({
-                            type: 'SET_SUBSCRIPTION',
-                            subscriptionId: data.tenants[0].subscriptions[0].id,
-                        });
-                    }
+                    // Do NOT auto-select subscription — default to tenant-wide view
                 }
             } else {
                 console.error('Failed to fetch tenant index:', indexResult.reason);
             }
 
-            // Handle report data — fall back to static demo data on error
+            // Handle report data — fall back to empty static state on error
             if (reportResult.status === 'fulfilled') {
                 setLiveReportData(reportResult.value);
             } else {
-                console.warn('Failed to fetch live report-data.json, using static fallback:', reportResult.reason);
+                console.warn('Failed to fetch live report-data.json, using fallback empty state:', reportResult.reason);
             }
         }).finally(() => {
             if (!cancelled) {
@@ -213,7 +208,9 @@ export function GlobalFilterProvider({ children }: { children: ReactNode }) {
     }, [availableSubscriptions, filters.subscriptionId, filters.operationalArea, filters.team, filters.keyword, settings]);
 
     const availableDates = useMemo(() => 
-        availableSubscriptions.find((s) => s.id === filters.subscriptionId)?.dates ?? [],
+        filters.subscriptionId
+            ? (availableSubscriptions.find((s) => s.id === filters.subscriptionId)?.dates ?? [])
+            : [...new Set(availableSubscriptions.flatMap(s => s.dates))].sort(),
         [availableSubscriptions, filters.subscriptionId]
     );
 

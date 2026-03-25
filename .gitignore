@@ -407,3 +407,8 @@ ZeroTrustReport
 /src/powershell/export
 ZeroTrustReport
 /code-tests/TestResults
+
+# Lint Artifacts
+eslint-*.txt
+lint-output*.json
+lint-results.json

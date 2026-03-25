@@ -364,6 +364,119 @@ export interface TrendsFilterState {
   compareSubscriptionId: string;
 }
 
+// ─── VMs & Containers ─────────────────────────────────────────────────
+export interface VirtualMachine {
+  id: string;
+  name: string;
+  subscriptionId: string;
+  subscriptionName: string;
+  resourceGroup: string;
+  region: string;
+  size: string;
+  sizeCategory: string;
+  os: string;
+  osType: 'Windows' | 'Linux';
+  status: 'Running' | 'Stopped' | 'Deallocated' | 'Unknown';
+  cpuPct: number;
+  memoryPct: number;
+  diskGB: number;
+  monthlyCostUSD: number;
+  publicIp: string | null;
+  tags: Record<string, string>;
+}
+
+export interface AksCluster {
+  id: string;
+  name: string;
+  subscriptionId: string;
+  subscriptionName: string;
+  resourceGroup: string;
+  region: string;
+  version: string;
+  nodeCount: number;
+  podCount: number;
+  podCapacity: number;
+  runningPods: number;
+  pendingPods: number;
+  failedPods: number;
+  succeededPods: number;
+  cpuUtilPct: number;
+  memUtilPct: number;
+  health: 'Healthy' | 'Warning' | 'Critical' | 'Unknown';
+  monthlyCostUSD: number;
+  tags: Record<string, string>;
+}
+
+export interface VmsContainersData {
+  runDate: string;
+  virtualMachines: VirtualMachine[];
+  aksClusters: AksCluster[];
+}
+
+// ─── Networks ─────────────────────────────────────────────────────────
+export interface VNet {
+  id: string;
+  name: string;
+  subscriptionId: string;
+  subscriptionName: string;
+  resourceGroup: string;
+  region: string;
+  addressSpace: string;
+  subnetCount: number;
+  peeredWith: string[];
+  dnsServers: string;
+  ddosProtection: boolean;
+  tags: Record<string, string>;
+}
+
+export interface NSG {
+  id: string;
+  name: string;
+  subscriptionId: string;
+  resourceGroup: string;
+  region: string;
+  allowRules: number;
+  denyRules: number;
+  subnetsAttached: number;
+  nicsAttached: number;
+  highRiskPorts: string[];
+  defaultDeny: boolean;
+}
+
+export interface Firewall {
+  id: string;
+  name: string;
+  subscriptionId: string;
+  resourceGroup: string;
+  region: string;
+  tier: string;
+  status: 'Running' | 'Stopped';
+  ruleCollections: number;
+  threatIntelMode: string;
+  monthlyCostUSD: number;
+}
+
+export interface LoadBalancer {
+  id: string;
+  name: string;
+  subscriptionId: string;
+  resourceGroup: string;
+  region: string;
+  sku: string;
+  type: 'Public' | 'Internal';
+  backendPools: number;
+  healthProbes: number;
+  rules: number;
+}
+
+export interface NetworksData {
+  runDate: string;
+  vnets: VNet[];
+  nsgs: NSG[];
+  firewalls: Firewall[];
+  loadBalancers: LoadBalancer[];
+}
+
 // ─── Snapshot bundle for a single run ─────────────────────────────────
 export interface RunSnapshot {
   date: string;
@@ -373,4 +486,7 @@ export interface RunSnapshot {
   governance: Governance;
   storageAccounts: StorageAccountsData;
   finops: FinOpsData;
+  vmsContainers: VmsContainersData;
+  networks: NetworksData;
 }
+

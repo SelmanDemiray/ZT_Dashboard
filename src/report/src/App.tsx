@@ -4,10 +4,8 @@ import { GlobalFilterProvider } from "./contexts/GlobalFilterContext";
 import { SettingsProvider } from "./contexts/SettingsContext";
 import { router } from "./Router";
 import { Toaster } from "./components/ui/sonner";
-import { useDemoToast } from "./hooks/useDemoToast";
 
 export default function App() {
-    useDemoToast();
 
     return (
         <ThemeProvider defaultTheme="system">

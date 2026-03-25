@@ -2170,9 +2170,110 @@ PolicyResources
         Set-AzContext -SubscriptionId $azureSubscriptionId | Out-Null
     }
     catch {
-        Write-Log "  [WARN] Defender recommendations failed: $($_.Exception.Message)" "WARN"
+        Write-Log "  [WARN] Get-AzSecurityAssessment failed: $($_.Exception.Message)" "WARN"
         Set-AzContext -SubscriptionId $azureSubscriptionId -ErrorAction SilentlyContinue | Out-Null
     }
+
+    # ── ARG Fallback: if Get-AzSecurityAssessment returned nothing (no Security Reader) ──
+    if ($recommendations.Count -eq 0) {
+        Write-Log "  Get-AzSecurityAssessment returned 0 results -- trying ARG securityresources fallback..."
+        try {
+            Ensure-AzSessionFresh
+
+            $defenderQuery = @"
+securityresources
+| where type == 'microsoft.security/assessments'
+| where subscriptionId == '$subId'
+| extend statusCode    = tostring(properties.status.code),
+         severity      = tostring(properties.status.severity),
+         displayName   = tostring(properties.displayName),
+         description   = tostring(properties.metadata.description),
+         remediation   = tostring(properties.metadata.remediationDescription),
+         category      = tostring(properties.metadata.categories[0]),
+         resourceCount = toint(properties.resourceDetails.count),
+         resourceId    = tostring(properties.resourceDetails.id),
+         resourceSource = tostring(properties.resourceDetails.source)
+| where statusCode == 'Unhealthy'
+| project assessmentId = name, displayName, description, severity, category,
+          resourceCount, remediation, resourceId, resourceSource
+"@
+
+            $defSkipToken = $null
+            $defRows      = @()
+            do {
+                $defParams = @{
+                    Query        = $defenderQuery
+                    Subscription = $subId
+                    First        = 1000
+                    ErrorAction  = 'Stop'
+                }
+                if ($defSkipToken) { $defParams['SkipToken'] = $defSkipToken }
+
+                $defResults = Search-AzGraph @defParams
+                $defPage    = @(if ($defResults.PSObject.Properties.Name -contains 'Data') { $defResults.Data } else { $defResults })
+                $defRows   += $defPage
+                $defSkipToken = if ($defResults.PSObject.Properties.Name -contains 'SkipToken') { $defResults.SkipToken } else { $null }
+            } while ($defSkipToken)
+
+            Write-Log "  ARG Defender fallback: found $($defRows.Count) unhealthy assessment(s)."
+
+            foreach ($row in $defRows) {
+                $sev = switch ($row.severity) {
+                    "Critical" { "critical" }
+                    "High"     { "high"     }
+                    "Medium"   { "medium"   }
+                    "Low"      { "low"      }
+                    default    { "medium"   }
+                }
+                $cat = if ($row.category) { $row.category } else { "General" }
+                $desc = if ($row.description) { $row.description } else { "" }
+                $rem  = if ($row.remediation) { $row.remediation } else { "" }
+                $dn   = if ($row.displayName) { $row.displayName } else { $row.assessmentId }
+                $rc   = if ($null -ne $row.resourceCount -and $row.resourceCount -gt 0) { [int]$row.resourceCount } else { 1 }
+
+                $affectedRes = @()
+                if ($row.resourceId) {
+                    $resName = ($row.resourceId -split '/')[-1]
+                    $resType = ""
+                    $resRg   = ""
+                    # Extract resource group from resource ID
+                    if ($row.resourceId -match '/resourceGroups/([^/]+)/') {
+                        $resRg = $Matches[1]
+                    }
+                    # Extract resource type
+                    if ($row.resourceId -match '/providers/([^/]+/[^/]+)') {
+                        $resType = $Matches[1]
+                    }
+                    $affectedRes += [ordered]@{
+                        id            = $row.resourceId
+                        name          = $resName
+                        type          = $resType
+                        resourceGroup = $resRg
+                    }
+                }
+
+                $recommendations += [ordered]@{
+                    id                     = $row.assessmentId
+                    name                   = $dn
+                    description            = $desc
+                    severity               = $sev
+                    category               = $cat
+                    subscriptionId         = $subId
+                    resourceCount          = $rc
+                    hasAttackPath          = $false
+                    affectedResources      = $affectedRes
+                    remediation            = $rem
+                    learnMoreUrl           = ""
+                    governanceAssignmentId = ""
+                }
+            }
+        }
+        catch {
+            Write-Log "  [WARN] ARG Defender fallback also failed: $($_.Exception.Message)" "WARN"
+        }
+    }
+
+    Write-Log "  Total Defender recommendations for sub $subId : $($recommendations.Count)"
 
     $defenderRecs = [ordered]@{ runDate = $today; recommendations = $recommendations }
     Upload-JsonBlob -BlobPath "$blobBasePath/defender-recs.json"   -Data $defenderRecs -StorageContext $ctx -Container $containerName

@@ -9,8 +9,13 @@ export function Applayout() {
 
     return (
         <>
+            <div className="bg-mesh-container">
+                <div className="bg-mesh-orb-1" />
+                <div className="bg-mesh-orb-2" />
+                <div className="bg-mesh-orb-3" />
+            </div>
             <Header />
-            <div className="flex-grow flex flex-col">
+            <div className="flex-grow flex flex-col relative z-0">
                 <main key={location.pathname} className="container max-w-6xl px-4 md:px-8 flex-grow flex flex-col animate-in fade-in slide-in-from-bottom-2 duration-500">
                     <Suspense fallback={
                         <div className="flex-grow flex items-center justify-center min-h-[400px]">

@@ -2,7 +2,8 @@ import React from 'react';
 import { PageHeader, PageHeaderHeading } from '@/components/page-header';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { useGlobalFilters } from '@/contexts/GlobalFilterContext';
-import { fetchStorageAccounts } from '@/services/blobService';
+import { fetchStorageAccounts, fetchFinOps } from '@/services/blobService';
+import type { FinOpsData } from '@/types/assessment';
 import type { StorageAccount } from '@/types/assessment';
 import { useSettings } from '@/contexts/SettingsContext';
 import {
@@ -46,17 +47,6 @@ import { Badge } from '@/components/ui/badge';
 
 const CAPACITY_COLORS = ['#3b82f6', '#22c55e', '#f59e0b', '#ec4899'];
 
-// Fallback cost trend mock since ARG doesn't have time-series metrics
-const costTrendData = [
-    { month: 'Sep 2025', cost: 2650, egress: 780 },
-    { month: 'Oct 2025', cost: 2780, egress: 820 },
-    { month: 'Nov 2025', cost: 2890, egress: 850 },
-    { month: 'Dec 2025', cost: 2920, egress: 910 },
-    { month: 'Jan 2026', cost: 3050, egress: 960 },
-    { month: 'Feb 2026', cost: 3180, egress: 1020 },
-    { month: 'Mar 2026', cost: 3280, egress: 1050 },
-];
-
 const TIER_COLORS: Record<string, string> = {
     Hot: '#f97316',
     Cool: '#3b82f6',
@@ -75,10 +65,12 @@ export default function Storage() {
 
     const [storageAccounts, setStorageAccounts] = React.useState<StorageAccount[]>([]);
     const [loading, setLoading] = React.useState(true);
+    const [costTrendData, setCostTrendData] = React.useState<{ month: string; cost: number; egress: number }[]>([]);
 
     React.useEffect(() => {
         if (!filters.tenantId || availableSubscriptions.length === 0 || availableDates.length === 0) {
             setStorageAccounts([]);
+            setCostTrendData([]);
             setLoading(false);
             return;
         }
@@ -86,14 +78,35 @@ export default function Storage() {
         let cancelled = false;
         setLoading(true);
 
-        const tasks = availableSubscriptions.map((sub) =>
+        const storageTasks = availableSubscriptions.map((sub) =>
             fetchStorageAccounts(filters.tenantId, sub.id, 'latest').catch(() => null)
         );
+        const finopsTasks = availableSubscriptions.map((sub) =>
+            fetchFinOps(filters.tenantId, sub.id, 'latest').catch((): FinOpsData | null => null)
+        );
 
-        Promise.all(tasks).then((results) => {
+        Promise.all([Promise.all(storageTasks), Promise.all(finopsTasks)]).then(([storageResults, finopsResults]) => {
             if (cancelled) return;
-            const allAccounts = results.flatMap((r) => r?.accounts || []);
+            const allAccounts = storageResults.flatMap((r) => r?.accounts || []);
             setStorageAccounts(allAccounts);
+
+            // Build cost trend from real FinOps monthly data
+            const monthlyMap = new Map<string, { cost: number; egress: number }>();
+            for (const finops of finopsResults) {
+                if (!finops?.monthlyCostData) continue;
+                for (const entry of finops.monthlyCostData) {
+                    const existing = monthlyMap.get(entry.month) || { cost: 0, egress: 0 };
+                    existing.cost += entry.actual;
+                    monthlyMap.set(entry.month, existing);
+                }
+            }
+            // Add real egress from storage accounts (total across all accounts)
+            const totalEgress = allAccounts.reduce((s, a) => s + (a.egressGB30d || 0), 0);
+            const trendEntries = Array.from(monthlyMap.entries())
+                .map(([month, data]) => ({ month, cost: Math.round(data.cost), egress: Math.round(totalEgress) }))
+                .sort((a, b) => a.month.localeCompare(b.month));
+            setCostTrendData(trendEntries);
+
             setLoading(false);
         });
 
@@ -317,19 +330,25 @@ export default function Storage() {
                     <Card className="glass-card gradient-border scan-line">
                         <CardHeader>
                             <CardTitle className="text-sm">Monthly Cost Trend</CardTitle>
-                            <CardDescription>Storage cost & egress over time</CardDescription>
+                            <CardDescription>Storage cost & egress over time (from FinOps data)</CardDescription>
                         </CardHeader>
                         <CardContent>
-                            <ResponsiveContainer width="100%" height={120}>
-                                <LineChart data={costTrendData} margin={{ left: 0, right: 8, top: 4, bottom: 4 }}>
-                                    <CartesianGrid strokeDasharray="3 3" opacity={0.2} />
-                                    <XAxis dataKey="month" tick={{ fontSize: 10 }} />
-                                    <YAxis tick={{ fontSize: 10 }} />
-                                    <RechartsTooltip contentStyle={{ fontSize: 12, borderRadius: 8 }} />
-                                    <Line type="monotone" dataKey="cost" stroke="#3b82f6" strokeWidth={2} dot={false} name="Cost ($)" />
-                                    <Line type="monotone" dataKey="egress" stroke="#f97316" strokeWidth={2} dot={false} name="Egress (GB)" />
-                                </LineChart>
-                            </ResponsiveContainer>
+                            {costTrendData.length > 0 ? (
+                                <ResponsiveContainer width="100%" height={120}>
+                                    <LineChart data={costTrendData} margin={{ left: 0, right: 8, top: 4, bottom: 4 }}>
+                                        <CartesianGrid strokeDasharray="3 3" opacity={0.2} />
+                                        <XAxis dataKey="month" tick={{ fontSize: 10 }} />
+                                        <YAxis tick={{ fontSize: 10 }} />
+                                        <RechartsTooltip contentStyle={{ fontSize: 12, borderRadius: 8 }} />
+                                        <Line type="monotone" dataKey="cost" stroke="#3b82f6" strokeWidth={2} dot={false} name="Cost ($)" />
+                                        <Line type="monotone" dataKey="egress" stroke="#f97316" strokeWidth={2} dot={false} name="Egress (GB)" />
+                                    </LineChart>
+                                </ResponsiveContainer>
+                            ) : (
+                                <div className="flex items-center justify-center h-[120px] text-xs text-muted-foreground">
+                                    No monthly cost data available yet
+                                </div>
+                            )}
                         </CardContent>
                     </Card>
                 </div>

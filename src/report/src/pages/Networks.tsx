@@ -14,117 +14,44 @@ import {
 } from '@/components/ui/table';
 import {
     BarChart, Bar, XAxis, YAxis, CartesianGrid,
-    Tooltip as RechartsTooltip, ResponsiveContainer,
-    AreaChart, Area, Legend,
+    Tooltip as RechartsTooltip, ResponsiveContainer, Legend,
 } from 'recharts';
 import {
     Globe, Shield, Wifi, Router, ArrowUpDown, ShieldCheck,
     ShieldAlert, Lock,
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
-
-// ─── Network Data Types ───────────────────────────────────────────────
-interface VNet {
-    id: string;
-    name: string;
-    subscriptionId: string;
-    subscriptionName: string;
-    resourceGroup: string;
-    region: string;
-    addressSpace: string;
-    subnetCount: number;
-    peeredWith: string[];
-    dnsServers: string;
-    ddosProtection: boolean;
-    tags: Record<string, string>;
-}
-
-interface NSG {
-    id: string;
-    name: string;
-    subscriptionId: string;
-    resourceGroup: string;
-    region: string;
-    allowRules: number;
-    denyRules: number;
-    subnetsAttached: number;
-    nicsAttached: number;
-    highRiskPorts: string[];
-    defaultDeny: boolean;
-}
-
-interface Firewall {
-    id: string;
-    name: string;
-    subscriptionId: string;
-    resourceGroup: string;
-    region: string;
-    tier: string;
-    status: 'Running' | 'Stopped';
-    ruleCollections: number;
-    threatIntelMode: string;
-    monthlyCostUSD: number;
-}
-
-interface LoadBalancer {
-    id: string;
-    name: string;
-    subscriptionId: string;
-    resourceGroup: string;
-    region: string;
-    sku: string;
-    type: 'Public' | 'Internal';
-    backendPools: number;
-    healthProbes: number;
-    rules: number;
-}
-
-const vnets: VNet[] = [
-    { id: 'vn-001', name: 'vnet-prod-east', subscriptionId: 'sub-prod-001', subscriptionName: 'Production', resourceGroup: 'rg-prod-network', region: 'East US', addressSpace: '10.0.0.0/16', subnetCount: 8, peeredWith: ['vnet-prod-west', 'vnet-hub-east'], dnsServers: 'Azure DNS', ddosProtection: true, tags: { environment: 'production', team: 'infrastructure' } },
-    { id: 'vn-002', name: 'vnet-prod-west', subscriptionId: 'sub-prod-001', subscriptionName: 'Production', resourceGroup: 'rg-prod-network', region: 'West US 2', addressSpace: '10.1.0.0/16', subnetCount: 6, peeredWith: ['vnet-prod-east', 'vnet-hub-west'], dnsServers: 'Azure DNS', ddosProtection: true, tags: { environment: 'production', team: 'infrastructure' } },
-    { id: 'vn-003', name: 'vnet-hub-east', subscriptionId: 'sub-prod-001', subscriptionName: 'Production', resourceGroup: 'rg-prod-hub', region: 'East US', addressSpace: '10.100.0.0/20', subnetCount: 4, peeredWith: ['vnet-prod-east', 'vnet-staging-east'], dnsServers: 'Custom (10.100.0.10, 10.100.0.11)', ddosProtection: true, tags: { environment: 'production', team: 'infrastructure' } },
-    { id: 'vn-004', name: 'vnet-staging-east', subscriptionId: 'sub-staging-001', subscriptionName: 'Staging', resourceGroup: 'rg-staging-network', region: 'East US 2', addressSpace: '10.2.0.0/16', subnetCount: 4, peeredWith: ['vnet-hub-east'], dnsServers: 'Azure DNS', ddosProtection: false, tags: { environment: 'staging', team: 'qa' } },
-    { id: 'vn-005', name: 'vnet-dev-east', subscriptionId: 'sub-dev-001', subscriptionName: 'Development', resourceGroup: 'rg-dev-network', region: 'East US', addressSpace: '10.3.0.0/16', subnetCount: 3, peeredWith: [], dnsServers: 'Azure DNS', ddosProtection: false, tags: { environment: 'development', team: 'frontend' } },
-    { id: 'vn-006', name: 'vnet-dmz-east', subscriptionId: 'sub-prod-001', subscriptionName: 'Production', resourceGroup: 'rg-prod-dmz', region: 'East US', addressSpace: '10.200.0.0/24', subnetCount: 2, peeredWith: ['vnet-hub-east'], dnsServers: 'Custom (10.100.0.10)', ddosProtection: true, tags: { environment: 'production', team: 'security' } },
-];
-
-const nsgs: NSG[] = [
-    { id: 'nsg-001', name: 'nsg-prod-web', subscriptionId: 'sub-prod-001', resourceGroup: 'rg-prod-web', region: 'East US', allowRules: 12, denyRules: 8, subnetsAttached: 2, nicsAttached: 4, highRiskPorts: [], defaultDeny: true },
-    { id: 'nsg-002', name: 'nsg-prod-api', subscriptionId: 'sub-prod-001', resourceGroup: 'rg-prod-api', region: 'East US', allowRules: 6, denyRules: 5, subnetsAttached: 1, nicsAttached: 3, highRiskPorts: [], defaultDeny: true },
-    { id: 'nsg-003', name: 'nsg-prod-data', subscriptionId: 'sub-prod-001', resourceGroup: 'rg-prod-data', region: 'East US', allowRules: 4, denyRules: 6, subnetsAttached: 1, nicsAttached: 2, highRiskPorts: [], defaultDeny: true },
-    { id: 'nsg-004', name: 'nsg-staging-web', subscriptionId: 'sub-staging-001', resourceGroup: 'rg-staging-web', region: 'East US 2', allowRules: 8, denyRules: 3, subnetsAttached: 1, nicsAttached: 2, highRiskPorts: ['22', '3389'], defaultDeny: false },
-    { id: 'nsg-005', name: 'nsg-dev-open', subscriptionId: 'sub-dev-001', resourceGroup: 'rg-dev-network', region: 'East US', allowRules: 15, denyRules: 1, subnetsAttached: 3, nicsAttached: 5, highRiskPorts: ['22', '3389', '445'], defaultDeny: false },
-    { id: 'nsg-006', name: 'nsg-prod-dmz', subscriptionId: 'sub-prod-001', resourceGroup: 'rg-prod-dmz', region: 'East US', allowRules: 3, denyRules: 12, subnetsAttached: 2, nicsAttached: 2, highRiskPorts: [], defaultDeny: true },
-    { id: 'nsg-007', name: 'nsg-prod-aks', subscriptionId: 'sub-prod-001', resourceGroup: 'rg-prod-aks', region: 'East US', allowRules: 18, denyRules: 10, subnetsAttached: 2, nicsAttached: 12, highRiskPorts: [], defaultDeny: true },
-];
-
-const firewalls: Firewall[] = [
-    { id: 'fw-001', name: 'fw-hub-east', subscriptionId: 'sub-prod-001', resourceGroup: 'rg-prod-hub', region: 'East US', tier: 'Premium', status: 'Running', ruleCollections: 24, threatIntelMode: 'Alert & Deny', monthlyCostUSD: 1825.00 },
-    { id: 'fw-002', name: 'fw-hub-west', subscriptionId: 'sub-prod-001', resourceGroup: 'rg-prod-hub', region: 'West US 2', tier: 'Standard', status: 'Running', ruleCollections: 18, threatIntelMode: 'Alert', monthlyCostUSD: 912.50 },
-];
-
-const loadBalancers: LoadBalancer[] = [
-    { id: 'lb-001', name: 'lb-prod-web', subscriptionId: 'sub-prod-001', resourceGroup: 'rg-prod-web', region: 'East US', sku: 'Standard', type: 'Public', backendPools: 2, healthProbes: 3, rules: 5 },
-    { id: 'lb-002', name: 'lb-prod-api-internal', subscriptionId: 'sub-prod-001', resourceGroup: 'rg-prod-api', region: 'East US', sku: 'Standard', type: 'Internal', backendPools: 1, healthProbes: 2, rules: 3 },
-    { id: 'lb-003', name: 'lb-prod-web-west', subscriptionId: 'sub-prod-001', resourceGroup: 'rg-prod-web', region: 'West US 2', sku: 'Standard', type: 'Public', backendPools: 2, healthProbes: 3, rules: 4 },
-    { id: 'lb-004', name: 'lb-staging', subscriptionId: 'sub-staging-001', resourceGroup: 'rg-staging-web', region: 'East US 2', sku: 'Basic', type: 'Public', backendPools: 1, healthProbes: 1, rules: 2 },
-];
-
-const trafficData = [
-    { time: 'Week 1', inbound: 4200, outbound: 3800 },
-    { time: 'Week 2', inbound: 4500, outbound: 4100 },
-    { time: 'Week 3', inbound: 5100, outbound: 4600 },
-    { time: 'Week 4', inbound: 4800, outbound: 4400 },
-    { time: 'Week 5', inbound: 5400, outbound: 5000 },
-    { time: 'Week 6', inbound: 5800, outbound: 5200 },
-    { time: 'Week 7', inbound: 6200, outbound: 5600 },
-    { time: 'Week 8', inbound: 5900, outbound: 5400 },
-];
+import type { VNet, NSG, Firewall, LoadBalancer } from '@/types/assessment';
+import { fetchNetworks } from '@/services/blobService';
 
 export default function Networks() {
-    const { filters, dispatch, availableSubscriptions } = useGlobalFilters();
+    const { filters, dispatch, availableSubscriptions, availableDates } = useGlobalFilters();
     const { settings } = useSettings();
     const [vnetSort, setVnetSort] = React.useState<{ field: string; dir: 'asc' | 'desc' }>({ field: 'subnetCount', dir: 'desc' });
+
+    // ─── Fetch blob data ──────────────────────────────────────────────
+    const [allVnets, setAllVnets] = React.useState<VNet[]>([]);
+    const [allNsgs, setAllNsgs] = React.useState<NSG[]>([]);
+    const [allFws, setAllFws] = React.useState<Firewall[]>([]);
+    const [allLbs, setAllLbs] = React.useState<LoadBalancer[]>([]);
+
+    React.useEffect(() => {
+        if (!filters.tenantId || availableSubscriptions.length === 0 || availableDates.length === 0) {
+            setAllVnets([]); setAllNsgs([]); setAllFws([]); setAllLbs([]); return;
+        }
+        let cancelled = false;
+        const tasks = availableSubscriptions.map(sub =>
+            fetchNetworks(filters.tenantId, sub.id, 'latest').catch(() => null)
+        );
+        Promise.all(tasks).then(results => {
+            if (cancelled) return;
+            setAllVnets(results.flatMap(r => r?.vnets ?? []));
+            setAllNsgs(results.flatMap(r => r?.nsgs ?? []));
+            setAllFws(results.flatMap(r => r?.firewalls ?? []));
+            setAllLbs(results.flatMap(r => r?.loadBalancers ?? []));
+        });
+        return () => { cancelled = true; };
+    }, [filters.tenantId, availableSubscriptions, availableDates]);
 
     // ─── Filtering ────────────────────────────────────────────────────
     const applySubFilter = <T extends { subscriptionId: string }>(arr: T[]) => {
@@ -145,10 +72,10 @@ export default function Networks() {
         return result;
     };
 
-    const filteredVnets = React.useMemo(() => applyTagFilter(applySubFilter(vnets)), [filters, settings]);
-    const filteredNsgs = React.useMemo(() => applySubFilter(nsgs), [filters]);
-    const filteredFws = React.useMemo(() => applySubFilter(firewalls), [filters]);
-    const filteredLbs = React.useMemo(() => applySubFilter(loadBalancers), [filters]);
+    const filteredVnets = React.useMemo(() => applyTagFilter(applySubFilter(allVnets)), [allVnets, filters, settings]);
+    const filteredNsgs = React.useMemo(() => applySubFilter(allNsgs), [allNsgs, filters]);
+    const filteredFws = React.useMemo(() => applySubFilter(allFws), [allFws, filters]);
+    const filteredLbs = React.useMemo(() => applySubFilter(allLbs), [allLbs, filters]);
 
     const sortedVnets = React.useMemo(() => {
         const arr = [...filteredVnets];
@@ -276,21 +203,26 @@ export default function Networks() {
                     </CardContent>
                 </Card>
 
-                {/* Traffic Flow */}
+                {/* Network Summary */}
                 <Card className="glass-card gradient-border scan-line">
-                    <CardHeader><CardTitle className="text-sm">Traffic Flow</CardTitle><CardDescription>Weekly inbound/outbound (GB)</CardDescription></CardHeader>
-                    <CardContent>
-                        <ResponsiveContainer width="100%" height={220}>
-                            <AreaChart data={trafficData} margin={{ left: 0, right: 8, top: 4, bottom: 4 }}>
-                                <CartesianGrid strokeDasharray="3 3" opacity={0.2} />
-                                <XAxis dataKey="time" tick={{ fontSize: 10 }} />
-                                <YAxis tick={{ fontSize: 11 }} />
-                                <RechartsTooltip contentStyle={{ fontSize: 12, borderRadius: 8 }} />
-                                <Legend iconSize={10} wrapperStyle={{ fontSize: 11 }} />
-                                <Area type="monotone" dataKey="inbound" stroke="#3b82f6" fill="#3b82f620" strokeWidth={2} name="Inbound (GB)" />
-                                <Area type="monotone" dataKey="outbound" stroke="#f97316" fill="#f9731620" strokeWidth={2} name="Outbound (GB)" />
-                            </AreaChart>
-                        </ResponsiveContainer>
+                    <CardHeader><CardTitle className="text-sm">Network Resources</CardTitle><CardDescription>Total resource counts</CardDescription></CardHeader>
+                    <CardContent className="flex items-center gap-8 pt-4">
+                        <div className="text-center">
+                            <p className="text-3xl font-bold tabular-nums text-blue-500">{filteredVnets.length}</p>
+                            <p className="text-xs text-muted-foreground">Virtual Networks</p>
+                        </div>
+                        <div className="text-center">
+                            <p className="text-3xl font-bold tabular-nums text-amber-500">{filteredNsgs.length}</p>
+                            <p className="text-xs text-muted-foreground">NSGs</p>
+                        </div>
+                        <div className="text-center">
+                            <p className="text-3xl font-bold tabular-nums text-red-500">{filteredFws.length}</p>
+                            <p className="text-xs text-muted-foreground">Firewalls</p>
+                        </div>
+                        <div className="text-center">
+                            <p className="text-3xl font-bold tabular-nums text-green-500">{filteredLbs.length}</p>
+                            <p className="text-xs text-muted-foreground">Load Balancers</p>
+                        </div>
                     </CardContent>
                 </Card>
             </div>

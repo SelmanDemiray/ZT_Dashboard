@@ -65,7 +65,18 @@ export default function Trends() {
 
     // Fetch all snapshots when tenant/subscription/dates change
     useEffect(() => {
-        if (!filters.tenantId || !filters.subscriptionId || availableDates.length === 0) {
+        if (!filters.tenantId || availableDates.length === 0) {
+            setSnapshots([]);
+            setLoading(false);
+            return;
+        }
+
+        // Determine which subscriptions to load
+        const subsToLoad = filters.subscriptionId
+            ? [filters.subscriptionId]
+            : availableSubscriptions.map(s => s.id);
+
+        if (subsToLoad.length === 0) {
             setSnapshots([]);
             setLoading(false);
             return;
@@ -75,20 +86,33 @@ export default function Trends() {
         setLoading(true);
         setError(null);
 
-        Promise.all([
-            fetchAllSnapshots(filters.tenantId, filters.subscriptionId, availableDates),
-            fetchRunSnapshot(filters.tenantId, filters.subscriptionId, 'latest').catch(() => null),
-        ])
-            .then(([data, latestSnapshot]) => {
+        // Fetch snapshots for each subscription and merge
+        const fetchForSub = async (subId: string) => {
+            const subDates = availableSubscriptions.find(s => s.id === subId)?.dates ?? availableDates;
+            const [data, latestSnapshot] = await Promise.all([
+                fetchAllSnapshots(filters.tenantId, subId, subDates),
+                fetchRunSnapshot(filters.tenantId, subId, 'latest').catch(() => null),
+            ]);
+            if (!latestSnapshot) return data;
+            const byDate = new Map<string, RunSnapshot>();
+            for (const s of [...data, latestSnapshot]) byDate.set(s.date, s);
+            return Array.from(byDate.values()).sort(
+                (a, b) => new Date(a.date).getTime() - new Date(b.date).getTime()
+            );
+        };
+
+        Promise.all(subsToLoad.map(fetchForSub))
+            .then((results) => {
                 if (cancelled) return;
-
-                if (!latestSnapshot) {
-                    setSnapshots(data);
-                    return;
-                }
-
+                // Merge snapshots by date — pick the first subscription's data per date
                 const byDate = new Map<string, RunSnapshot>();
-                for (const s of [...data, latestSnapshot]) byDate.set(s.date, s);
+                for (const subSnapshots of results) {
+                    for (const snap of subSnapshots) {
+                        if (!byDate.has(snap.date)) {
+                            byDate.set(snap.date, snap);
+                        }
+                    }
+                }
                 const merged = Array.from(byDate.values()).sort(
                     (a, b) => new Date(a.date).getTime() - new Date(b.date).getTime()
                 );
@@ -104,7 +128,7 @@ export default function Trends() {
         return () => {
             cancelled = true;
         };
-    }, [filters.tenantId, filters.subscriptionId, availableDates]);
+    }, [filters.tenantId, filters.subscriptionId, availableSubscriptions, availableDates]);
 
     // ─── Filter snapshots by date range ───────────────────────────────
     const filteredSnapshots = useMemo(() => {
@@ -189,7 +213,7 @@ export default function Trends() {
             <Card className="my-6">
                 <CardContent className="py-8 text-center">
                     <p className="text-sm text-muted-foreground">
-                        No snapshot data available for the selected filters. Select a tenant and subscription from the global filter bar.
+                        No snapshot data available for the selected filters. Select a tenant from the global filter bar to view trend data.
                     </p>
                 </CardContent>
             </Card>

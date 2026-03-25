@@ -37,9 +37,12 @@ export function GlobalFilters() {
                 {/* Subscription */}
                 <FilterSelect
                     label="Subscription"
-                    value={filters.subscriptionId}
-                    options={availableSubscriptions.map((s) => ({ value: s.id, label: s.name }))}
-                    onChange={(v) => dispatch({ type: 'SET_SUBSCRIPTION', subscriptionId: v })}
+                    value={filters.subscriptionId || 'all'}
+                    options={[
+                        { value: 'all', label: 'All Subscriptions' },
+                        ...availableSubscriptions.map((s) => ({ value: s.id, label: s.name })),
+                    ]}
+                    onChange={(v) => dispatch({ type: 'SET_SUBSCRIPTION', subscriptionId: v === 'all' ? '' : v })}
                 />
 
                 {/* Resource Group */}

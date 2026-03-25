@@ -6,6 +6,8 @@ import type {
     Governance,
     StorageAccountsData,
     FinOpsData,
+    VmsContainersData,
+    NetworksData,
     RunSnapshot,
 } from '@/types/assessment';
 
@@ -99,8 +101,9 @@ export async function fetchPolicyMapping(
             `${tenantId}/policy-mapping.json`,
             noCache
         );
-    } catch {
+    } catch (err) {
         // Fallback to empty if not generated yet by playbook
+        console.warn('[blobService] Policy mapping not available — policies will display raw IDs:', err);
         return { mapping: {} };
     }
 }
@@ -153,6 +156,30 @@ export async function fetchFinOps(
     );
 }
 
+export async function fetchVmsContainers(
+    tenantId: string,
+    subscriptionId: string,
+    date: string,
+    noCache = false
+): Promise<VmsContainersData> {
+    return fetchJson<VmsContainersData>(
+        `${tenantId}/${subscriptionId}/${date}/vms-containers.json`,
+        noCache
+    );
+}
+
+export async function fetchNetworks(
+    tenantId: string,
+    subscriptionId: string,
+    date: string,
+    noCache = false
+): Promise<NetworksData> {
+    return fetchJson<NetworksData>(
+        `${tenantId}/${subscriptionId}/${date}/networks.json`,
+        noCache
+    );
+}
+
 // ─── Default empty objects for missing data files ─────────────────────────────
 
 const EMPTY_ZERO_TRUST: ZeroTrust = {
@@ -187,13 +214,19 @@ const EMPTY_FINOPS: FinOpsData = {
     savingsRecommendations: [],
 };
 
+const EMPTY_VMS_CONTAINERS: VmsContainersData = {
+    runDate: '', virtualMachines: [], aksClusters: [],
+};
+
+const EMPTY_NETWORKS: NetworksData = {
+    runDate: '', vnets: [], nsgs: [], firewalls: [], loadBalancers: [],
+};
+
 export async function fetchRunSnapshot(
     tenantId: string,
     subscriptionId: string,
     date: string
 ): Promise<RunSnapshot> {
-    // Use `allSettled` so a single missing file (e.g. zero-trust.json returning 404)
-    // doesn't crash the entire snapshot — partial data is better than no data.
     const noCache = date === 'latest';
     const results = await Promise.allSettled([
         fetchZeroTrust(tenantId, subscriptionId, date, noCache),
@@ -202,6 +235,8 @@ export async function fetchRunSnapshot(
         fetchGovernance(tenantId, subscriptionId, date, noCache),
         fetchStorageAccounts(tenantId, subscriptionId, date, noCache),
         fetchFinOps(tenantId, subscriptionId, date, noCache),
+        fetchVmsContainers(tenantId, subscriptionId, date, noCache),
+        fetchNetworks(tenantId, subscriptionId, date, noCache),
     ]);
 
     const zeroTrust = results[0].status === 'fulfilled' ? results[0].value : { ...EMPTY_ZERO_TRUST, tenantId, runDate: date };
@@ -210,13 +245,14 @@ export async function fetchRunSnapshot(
     const governance = results[3].status === 'fulfilled' ? results[3].value : { ...EMPTY_GOVERNANCE, runDate: date };
     const storageAccounts = results[4].status === 'fulfilled' ? results[4].value : { ...EMPTY_STORAGE_ACCOUNTS, runDate: date };
     const finops = results[5].status === 'fulfilled' ? results[5].value : { ...EMPTY_FINOPS, runDate: date };
+    const vmsContainers = results[6].status === 'fulfilled' ? results[6].value : { ...EMPTY_VMS_CONTAINERS, runDate: date };
+    const networks = results[7].status === 'fulfilled' ? results[7].value : { ...EMPTY_NETWORKS, runDate: date };
 
-    // If ALL files failed, throw so callers know there's truly no data
     if (results.every(r => r.status === 'rejected')) {
         throw new Error(`All data files missing for ${tenantId}/${subscriptionId}/${date}`);
     }
 
-    return { date, zeroTrust, policyCompliance, defenderRecs, governance, storageAccounts, finops };
+    return { date, zeroTrust, policyCompliance, defenderRecs, governance, storageAccounts, finops, vmsContainers, networks };
 }
 
 export async function fetchAllSnapshots(

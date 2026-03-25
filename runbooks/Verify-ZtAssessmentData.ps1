@@ -332,12 +332,13 @@ else {
 
 
 # ───────────────────────────────────────────────────────────────────────────────
-# PART 2: UPDATE POLICY NAMES MAPPING (ARG Policy Metadata Fetch)
+# PART 2: UPDATE POLICY NAMES MAPPING (ARM REST API)
 # ───────────────────────────────────────────────────────────────────────────────
 Write-Log "--- PART 2: Updating Policy Names Mapping ---"
 
 Write-Log "Discovering Azure subscriptions..."
 try {
+    Ensure-AzSessionFresh
     $allSubs = @(Get-AzSubscription -TenantId $targetTenantId -ErrorAction Stop |
                  Where-Object { $_.State -eq 'Enabled' })
     Write-Log "Found $($allSubs.Count) enabled subscription(s)."
@@ -347,175 +348,68 @@ catch {
     throw
 }
 
-# FIX #1: Collect subscription IDs for ARG scope — without this ARG returns
-# incomplete or zero results without throwing, causing silent lookup failures.
 $subIds = @($allSubs | Select-Object -ExpandProperty Id)
 
 $mapping = [ordered]@{ policies = @{}; policySets = @{} }
 
-
-# ── Policy Definitions via ARG ─────────────────────────────────────────────────
-Write-Log "Fetching Policy Definitions via Azure Resource Graph..."
 try {
     Ensure-AzSessionFresh
-    $policyRows = @()
-    $pSkipToken = $null
-    do {
-        $pParams = @{
-            Query        = "policyresources | where type =~ 'microsoft.authorization/policydefinitions' | project id, name, displayName = properties.displayName"
-            First        = 1000
-            Subscription = $subIds      # FIX #1 applied
-            ErrorAction  = 'Stop'
-        }
-        if ($pSkipToken) { $pParams['SkipToken'] = $pSkipToken }
+    $secTok = Get-AzAccessToken -ResourceUrl "https://management.azure.com/" -AsSecureString -ErrorAction Stop
+    $armTok = [System.Net.NetworkCredential]::new('', $secTok.Token).Password
+    $headers = @{ Authorization = "Bearer $armTok" }
 
-        $pResults   = Search-AzGraph @pParams
-        $pPage      = @(if ($pResults.PSObject.Properties.Name -contains 'Data') { $pResults.Data } else { $pResults })
-        $policyRows += $pPage
-        $pSkipToken = if ($pResults.PSObject.Properties.Name -contains 'SkipToken') { $pResults.SkipToken } else { $null }
-    } while ($pSkipToken)
-
-    foreach ($pol in $policyRows) {
-        # FIX #4: safe null-guard on JToken displayName before ToString()
-        $displayName = Get-SafeDisplayName $pol.displayName
-        if ($null -ne $displayName) {
-            $mapping.policies[$pol.name.ToString().ToLower()] = $displayName
-            $mapping.policies[$pol.id.ToString().ToLower()]   = $displayName
-        }
-    }
-    Write-Log "ARG: mapped $($mapping.policies.Keys.Count) Policy Definition entries."
-}
-catch {
-    Write-Log "ARG policy query failed -- falling back to Get-AzPolicyDefinition: $_" "WARN"
-    foreach ($sub in $allSubs) {
+    function Fetch-ArmPolicies {
+        param([string]$Uri, [string]$Type)
         try {
-            Set-AzContext -SubscriptionId $sub.Id -ErrorAction SilentlyContinue | Out-Null
-            $policies = @(Get-AzPolicyDefinition -ErrorAction SilentlyContinue)
-            foreach ($pol in $policies) {
-                $dn = Get-SafeDisplayName $pol.Properties.DisplayName
-                if ($null -ne $dn) {
-                    $mapping.policies[$pol.Name.ToLower()]       = $dn
-                    $mapping.policies[$pol.ResourceId.ToLower()] = $dn
+            $nextLink = $Uri
+            while ($nextLink) {
+                $resp = Invoke-RestMethod -Uri $nextLink -Headers $headers -Method GET -TimeoutSec 60 -ErrorAction Stop
+                foreach ($item in $resp.value) {
+                    $dn = Get-SafeDisplayName $item.properties.displayName
+                    if ($null -ne $dn) {
+                        if ($Type -eq 'policy') {
+                            $mapping.policies[$item.name.ToLower()] = $dn
+                            $mapping.policies[$item.id.ToLower()]   = $dn
+                        } else {
+                            $mapping.policySets[$item.name.ToLower()] = $dn
+                            $mapping.policySets[$item.id.ToLower()]   = $dn
+                        }
+                    }
                 }
+                $nextLink = if ($resp.nextLink) { $resp.nextLink } else { $null }
             }
-        } catch {}
-    }
-}
-
-
-# ── Policy Set Definitions via ARG ────────────────────────────────────────────
-Write-Log "Fetching Policy Set Definitions via Azure Resource Graph..."
-try {
-    Ensure-AzSessionFresh
-    $setRows    = @()
-    $sSkipToken = $null
-    do {
-        $sParams = @{
-            Query        = "policyresources | where type =~ 'microsoft.authorization/policysetdefinitions' | project id, name, displayName = properties.displayName"
-            First        = 1000
-            Subscription = $subIds      # FIX #1 applied
-            ErrorAction  = 'Stop'
-        }
-        if ($sSkipToken) { $sParams['SkipToken'] = $sSkipToken }
-
-        $sResults   = Search-AzGraph @sParams
-        $sPage      = @(if ($sResults.PSObject.Properties.Name -contains 'Data') { $sResults.Data } else { $sResults })
-        $setRows   += $sPage
-        $sSkipToken = if ($sResults.PSObject.Properties.Name -contains 'SkipToken') { $sResults.SkipToken } else { $null }
-    } while ($sSkipToken)
-
-    foreach ($set in $setRows) {
-        $displayName = Get-SafeDisplayName $set.displayName
-        if ($null -ne $displayName) {
-            $mapping.policySets[$set.name.ToString().ToLower()] = $displayName
-            $mapping.policySets[$set.id.ToString().ToLower()]   = $displayName
+        } catch {
+            Write-Log "  [WARN] Failed to fetch REST API policies from $Uri : $($_.Exception.Message)" "WARN"
         }
     }
-    Write-Log "ARG: mapped $($mapping.policySets.Keys.Count) Policy Set entries."
-}
-catch {
-    Write-Log "ARG policy-set query failed -- falling back to Get-AzPolicySetDefinition: $_" "WARN"
+
+    Write-Log "Fetching Built-in Policy Definitions..."
+    Fetch-ArmPolicies "https://management.azure.com/providers/Microsoft.Authorization/policyDefinitions?api-version=2021-06-01" 'policy'
+    Write-Log "Fetching Built-in Policy Set Definitions..."
+    Fetch-ArmPolicies "https://management.azure.com/providers/Microsoft.Authorization/policySetDefinitions?api-version=2021-06-01" 'set'
+
     foreach ($sub in $allSubs) {
-        try {
-            Set-AzContext -SubscriptionId $sub.Id -ErrorAction SilentlyContinue | Out-Null
-            $sets = @(Get-AzPolicySetDefinition -ErrorAction SilentlyContinue)
-            foreach ($set in $sets) {
-                $dn = Get-SafeDisplayName $set.Properties.DisplayName
-                if ($null -ne $dn) {
-                    $mapping.policySets[$set.Name.ToLower()]       = $dn
-                    $mapping.policySets[$set.ResourceId.ToLower()] = $dn
-                }
-            }
-        } catch {}
+        Write-Log "Fetching Custom Policies for subscription $($sub.Id)..."
+        Fetch-ArmPolicies "https://management.azure.com/subscriptions/$($sub.Id)/providers/Microsoft.Authorization/policyDefinitions?api-version=2021-06-01" 'policy'
+        Fetch-ArmPolicies "https://management.azure.com/subscriptions/$($sub.Id)/providers/Microsoft.Authorization/policySetDefinitions?api-version=2021-06-01" 'set'
     }
-}
 
-
-# ── Built-in Definitions (tenant-wide, no sub context needed) ─────────────────
-Write-Log "Fetching built-in Policy and PolicySet Definitions..."
-try {
-    $builtInPolicies = @(Get-AzPolicyDefinition -Builtin -ErrorAction SilentlyContinue)
-    foreach ($pol in $builtInPolicies) {
-        $dn = Get-SafeDisplayName $pol.Properties.DisplayName
-        if ($null -ne $dn) {
-            $mapping.policies[$pol.Name.ToLower()]       = $dn
-            $mapping.policies[$pol.ResourceId.ToLower()] = $dn
-        }
-    }
-    Write-Log "Built-in policies added: $($builtInPolicies.Count)"
-}
-catch { Write-Log "Built-in policy fetch failed (non-fatal): $_" "WARN" }
-
-try {
-    $builtInSets = @(Get-AzPolicySetDefinition -Builtin -ErrorAction SilentlyContinue)
-    foreach ($set in $builtInSets) {
-        $dn = Get-SafeDisplayName $set.Properties.DisplayName
-        if ($null -ne $dn) {
-            $mapping.policySets[$set.Name.ToLower()]       = $dn
-            $mapping.policySets[$set.ResourceId.ToLower()] = $dn
-        }
-    }
-    Write-Log "Built-in policy sets added: $($builtInSets.Count)"
-}
-catch { Write-Log "Built-in policy-set fetch failed (non-fatal): $_" "WARN" }
-
-
-# ── Custom Definitions from Management Groups ──────────────────────────────────
-Write-Log "Fetching custom Policy Definitions from Management Groups..."
-try {
     $mgs = @(Get-AzManagementGroup -ErrorAction SilentlyContinue)
     foreach ($mg in $mgs) {
-        try {
-            $mgPolicies = @(Get-AzPolicyDefinition -ManagementGroupName $mg.Name -Custom -ErrorAction SilentlyContinue)
-            foreach ($pol in $mgPolicies) {
-                $dn = Get-SafeDisplayName $pol.Properties.DisplayName
-                if ($null -ne $dn) {
-                    $mapping.policies[$pol.Name.ToLower()]       = $dn
-                    $mapping.policies[$pol.ResourceId.ToLower()] = $dn
-                }
-            }
-            $mgSets = @(Get-AzPolicySetDefinition -ManagementGroupName $mg.Name -Custom -ErrorAction SilentlyContinue)
-            foreach ($set in $mgSets) {
-                $dn = Get-SafeDisplayName $set.Properties.DisplayName
-                if ($null -ne $dn) {
-                    $mapping.policySets[$set.Name.ToLower()]       = $dn
-                    $mapping.policySets[$set.ResourceId.ToLower()] = $dn
-                }
-            }
-        } catch {}
+        Fetch-ArmPolicies "https://management.azure.com/providers/Microsoft.Management/managementGroups/$($mg.Name)/providers/Microsoft.Authorization/policyDefinitions?api-version=2021-06-01" 'policy'
+        Fetch-ArmPolicies "https://management.azure.com/providers/Microsoft.Management/managementGroups/$($mg.Name)/providers/Microsoft.Authorization/policySetDefinitions?api-version=2021-06-01" 'set'
     }
-}
-catch { Write-Log "Management Group policy fetch failed (non-fatal): $_" "WARN" }
 
+    Write-Log "ARM REST API: mapped $($mapping.policies.Keys.Count) Policies and $($mapping.policySets.Keys.Count) Policy Sets."
+}
+catch {
+    Write-Log "Failed to execute ARM REST API policy fetch: $_" "WARN"
+}
 
 # ── Build flat mapping ─────────────────────────────────────────────────────────
-# FIX #2 / #3: The blob is stored with a top-level `mapping` key.
-# Every key is already lowercase. The frontend MUST access data.mapping[id.toLowerCase()].
-# No mixed-case duplicates are needed if the frontend normalises on read.
 $flatMapping = [ordered]@{}
 foreach ($key in $mapping.policies.Keys)    { $flatMapping[$key] = $mapping.policies[$key] }
 foreach ($key in $mapping.policySets.Keys)  { $flatMapping[$key] = $mapping.policySets[$key] }
-
 
 # ── Diagnostic verification before upload ─────────────────────────────────────
 Write-Log "--- Diagnostic: flat mapping entry count = $($flatMapping.Keys.Count) ---"
@@ -528,17 +422,12 @@ if ($flatMapping.Keys.Count -eq 0) {
     }
 }
 
-
-# FIX #3: Structure is { lastUpdated, mapping: { <id>: <name> } }
-# Frontend must read:  const name = data.mapping[policyId.toLowerCase()] ?? policyId
 $finalData = [ordered]@{
     lastUpdated = (Get-Date).ToString("o")
     mapping     = $flatMapping
 }
 
-# FIX #5: Blob path includes tenant ID prefix — frontend must use the same path.
-# Full blob URL: https://<storage>.blob.core.windows.net/<container>/<tenantId>/policy-mapping.json
-$blobMapPath = "assessments/$targetTenantId/policy-mapping.json"
+$blobMapPath = "$targetTenantId/policy-mapping.json"
 Write-Log "Uploading policy mapping --> container='$containerName'  path='$blobMapPath'"
 
 try {
@@ -605,11 +494,56 @@ Resources
         
         $accounts = @()
         foreach ($row in $group.Group) {
+            # ── Real metrics via Azure Monitor REST API ──
+            $blobCap = 0; $fileCap = 0; $tableCap = 0; $queueCap = 0
+            $txn30d = 0; $egressGB = 0; $ingressGB = 0
+            try {
+                $metricEnd   = [DateTime]::UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ")
+                $metricStart = [DateTime]::UtcNow.AddDays(-30).ToString("yyyy-MM-ddTHH:mm:ssZ")
+                $secToken    = Get-AzAccessToken -ResourceUrl "https://management.azure.com" -AsSecureString -ErrorAction Stop
+                $armToken    = [System.Net.NetworkCredential]::new('', $secToken.Token).Password
+
+                # Blob capacity (latest value)
+                $capUri = "https://management.azure.com$($row.id)/blobServices/default/providers/Microsoft.Insights/metrics?api-version=2023-10-01&metricnames=BlobCapacity&timespan=$metricStart/$metricEnd&interval=P1D&aggregation=Average"
+                $capResp = Invoke-RestMethod -Uri $capUri -Headers @{Authorization="Bearer $armToken"} -Method GET -TimeoutSec 30 -ErrorAction SilentlyContinue
+                if ($capResp.value -and $capResp.value[0].timeseries -and $capResp.value[0].timeseries[0].data) {
+                    $lastVal = ($capResp.value[0].timeseries[0].data | Where-Object { $null -ne $_.average } | Select-Object -Last 1).average
+                    if ($lastVal) { $blobCap = [math]::Round($lastVal / 1GB, 2) }
+                }
+
+                # Transactions (sum over 30d)
+                $txnUri = "https://management.azure.com$($row.id)/providers/Microsoft.Insights/metrics?api-version=2023-10-01&metricnames=Transactions&timespan=$metricStart/$metricEnd&interval=P1D&aggregation=Total"
+                $txnResp = Invoke-RestMethod -Uri $txnUri -Headers @{Authorization="Bearer $armToken"} -Method GET -TimeoutSec 30 -ErrorAction SilentlyContinue
+                if ($txnResp.value -and $txnResp.value[0].timeseries -and $txnResp.value[0].timeseries[0].data) {
+                    $txn30d = ($txnResp.value[0].timeseries[0].data | ForEach-Object { $_.total } | Measure-Object -Sum).Sum
+                    if ($null -eq $txn30d) { $txn30d = 0 }
+                }
+
+                # Egress (sum over 30d)
+                $egUri = "https://management.azure.com$($row.id)/providers/Microsoft.Insights/metrics?api-version=2023-10-01&metricnames=Egress&timespan=$metricStart/$metricEnd&interval=P1D&aggregation=Total"
+                $egResp = Invoke-RestMethod -Uri $egUri -Headers @{Authorization="Bearer $armToken"} -Method GET -TimeoutSec 30 -ErrorAction SilentlyContinue
+                if ($egResp.value -and $egResp.value[0].timeseries -and $egResp.value[0].timeseries[0].data) {
+                    $egTotal = ($egResp.value[0].timeseries[0].data | ForEach-Object { $_.total } | Measure-Object -Sum).Sum
+                    if ($egTotal) { $egressGB = [math]::Round($egTotal / 1GB, 2) }
+                }
+
+                # Ingress (sum over 30d)
+                $igUri = "https://management.azure.com$($row.id)/providers/Microsoft.Insights/metrics?api-version=2023-10-01&metricnames=Ingress&timespan=$metricStart/$metricEnd&interval=P1D&aggregation=Total"
+                $igResp = Invoke-RestMethod -Uri $igUri -Headers @{Authorization="Bearer $armToken"} -Method GET -TimeoutSec 30 -ErrorAction SilentlyContinue
+                if ($igResp.value -and $igResp.value[0].timeseries -and $igResp.value[0].timeseries[0].data) {
+                    $igTotal = ($igResp.value[0].timeseries[0].data | ForEach-Object { $_.total } | Measure-Object -Sum).Sum
+                    if ($igTotal) { $ingressGB = [math]::Round($igTotal / 1GB, 2) }
+                }
+            }
+            catch {
+                Write-Log "  [WARN] Metrics fetch failed for $($row.name): $($_.Exception.Message)" "WARN"
+            }
+
             $accounts += [ordered]@{
                 id = $row.id
                 name = $row.name
                 subscriptionId = $row.subscriptionId
-                subscriptionName = "Subscription $($row.subscriptionId.Substring(0,8))" # Placeholder until joined with index
+                subscriptionName = ($allSubs | Where-Object { $_.Id -eq $row.subscriptionId } | Select-Object -First 1).Name
                 resourceGroup = $row.resourceGroup
                 region = $row.location
                 location = $row.location
@@ -619,17 +553,16 @@ Resources
                 accessTier = if ([string]::IsNullOrEmpty($row.accessTier)) { 'Hot' } else { $row.accessTier }
                 encryption = $row.encryption
                 httpsOnly = $row.supportsHttpsTrafficOnly
-                blobCapacityGB = (Get-Random -Minimum 10 -Maximum 5000)      # Simulated metric
-                fileCapacityGB = (Get-Random -Minimum 0 -Maximum 1000)       # Simulated metric
-                tableCapacityGB = (Get-Random -Minimum 0 -Maximum 100)       # Simulated metric
-                queueCapacityGB = (Get-Random -Minimum 0 -Maximum 50)        # Simulated metric
-                monthlyCostUSD = (Get-Random -Minimum 5 -Maximum 800)        # Simulated metric
-                transactions30d = (Get-Random -Minimum 1000 -Maximum 1000000)# Simulated metric
-                egressGB30d = (Get-Random -Minimum 0 -Maximum 1500)          # Simulated metric
-                ingressGB30d = (Get-Random -Minimum 0 -Maximum 3000)         # Simulated metric
+                blobCapacityGB = $blobCap
+                fileCapacityGB = $fileCap
+                tableCapacityGB = $tableCap
+                queueCapacityGB = $queueCap
+                monthlyCostUSD = 0
+                transactions30d = [int64]$txn30d
+                egressGB30d = $egressGB
+                ingressGB30d = $ingressGB
                 createdDate = $row.createdDate
                 tags = if ($null -ne $row.tags) { $row.tags } else { @{} }
-                
                 tlsVersion = $row.tlsVersion
                 publicNetworkAccess = $row.publicNetworkAccess
                 supportsHttpsTrafficOnly = $row.supportsHttpsTrafficOnly
@@ -666,7 +599,7 @@ catch {
 }
 
 # ───────────────────────────────────────────────────────────────────────────────
-# PART 4: FINOPS DATA COLLECTION (Cost Management API)
+# PART 4: FINOPS DATA COLLECTION (Real Azure Cost Management + Advisor)
 # ───────────────────────────────────────────────────────────────────────────────
 Write-Log "--- PART 4: Collecting FinOps / Cost Data ---"
 
@@ -674,66 +607,657 @@ foreach ($subId in $subIds) {
     if ([string]::IsNullOrWhiteSpace($subId)) { continue }
 
     try {
-        # Note: In a real enterprise script with Azure permissions, we would invoke:
-        # Invoke-AzRestMethod -Method POST -Path "/subscriptions/$subId/providers/Microsoft.CostManagement/query?api-version=2023-11-01" -Payload $query
-        
-        # Here we simulate the API response structure because ARG does not store historical costs,
-        # and Azure Cost Management queries are too slow/unauthorized for standard Reader roles without Cost Reader.
-        
+        Ensure-AzSessionFresh
+        Set-AzContext -SubscriptionId $subId -ErrorAction SilentlyContinue | Out-Null
+        $secTok  = Get-AzAccessToken -ResourceUrl "https://management.azure.com" -AsSecureString -ErrorAction Stop
+        $armTok  = [System.Net.NetworkCredential]::new('', $secTok.Token).Password
+        $hdrs    = @{ Authorization = "Bearer $armTok"; "Content-Type" = "application/json" }
+
+        $subName = ($allSubs | Where-Object { $_.Id -eq $subId } | Select-Object -First 1).Name
+        if (-not $subName) { $subName = "Subscription $($subId.Substring(0,8))" }
+
+        # ── Service costs: current month by ServiceName ──
+        $serviceCosts  = @()
+        $cmUri = "https://management.azure.com/subscriptions/$subId/providers/Microsoft.CostManagement/query?api-version=2023-11-01"
+        $curMonthStart = (Get-Date -Day 1).ToString("yyyy-MM-dd")
+        $curMonthEnd   = (Get-Date).ToString("yyyy-MM-dd")
+        $prevMonthStart = (Get-Date -Day 1).AddMonths(-1).ToString("yyyy-MM-dd")
+        $prevMonthEnd   = ((Get-Date -Day 1).AddDays(-1)).ToString("yyyy-MM-dd")
+
+        $colors = @('#3b82f6','#8b5cf6','#06b6d4','#f97316','#22c55e','#ec4899','#eab308','#14b8a6')
+        $colorIdx = 0
+
+        # Current month
+        $cmBody = @{
+            type = "ActualCost"
+            timeframe = "Custom"
+            timePeriod = @{ from = $curMonthStart; to = $curMonthEnd }
+            dataset = @{
+                granularity = "None"
+                aggregation = @{ totalCost = @{ name = "Cost"; function = "Sum" } }
+                grouping = @(@{ type = "Dimension"; name = "ServiceName" })
+            }
+        } | ConvertTo-Json -Depth 10
+
+        $curCosts = @{}
+        try {
+            $cmResp = Invoke-RestMethod -Uri $cmUri -Headers $hdrs -Method POST -Body $cmBody -TimeoutSec 60 -ErrorAction Stop
+            foreach ($row in $cmResp.properties.rows) {
+                $svcName = $row[1]
+                $cost    = [math]::Round($row[0], 2)
+                if ($cost -gt 0) { $curCosts[$svcName] = $cost }
+            }
+            Write-Log "  Cost Management: $($curCosts.Count) services with costs this month."
+        }
+        catch {
+            Write-Log "  [WARN] Cost Management current-month query failed: $($_.Exception.Message)" "WARN"
+        }
+
+        # Previous month
+        $prevCosts = @{}
+        try {
+            $pmBody = @{
+                type = "ActualCost"
+                timeframe = "Custom"
+                timePeriod = @{ from = $prevMonthStart; to = $prevMonthEnd }
+                dataset = @{
+                    granularity = "None"
+                    aggregation = @{ totalCost = @{ name = "Cost"; function = "Sum" } }
+                    grouping = @(@{ type = "Dimension"; name = "ServiceName" })
+                }
+            } | ConvertTo-Json -Depth 10
+            $pmResp = Invoke-RestMethod -Uri $cmUri -Headers $hdrs -Method POST -Body $pmBody -TimeoutSec 60 -ErrorAction Stop
+            foreach ($row in $pmResp.properties.rows) {
+                $prevCosts[$row[1]] = [math]::Round($row[0], 2)
+            }
+        }
+        catch {
+            Write-Log "  [WARN] Cost Management previous-month query failed: $($_.Exception.Message)" "WARN"
+        }
+
+        foreach ($svc in ($curCosts.Keys | Sort-Object { $curCosts[$_] } -Descending | Select-Object -First 15)) {
+            $cur  = $curCosts[$svc]
+            $prev = if ($prevCosts.ContainsKey($svc)) { $prevCosts[$svc] } else { 0 }
+            $trend = if ($prev -gt 0) { [math]::Round((($cur - $prev) / $prev) * 100, 1) } else { 0 }
+            $serviceCosts += @{
+                service       = $svc
+                currentMonth  = $cur
+                previousMonth = $prev
+                trend         = $trend
+                color         = $colors[$colorIdx % $colors.Count]
+            }
+            $colorIdx++
+        }
+
+        $totalCur  = ($curCosts.Values  | Measure-Object -Sum).Sum
+        $totalPrev = ($prevCosts.Values | Measure-Object -Sum).Sum
+
+        # ── Daily cost data (current month) ──
+        $dailyCostData = @()
+        try {
+            $dBody = @{
+                type = "ActualCost"
+                timeframe = "Custom"
+                timePeriod = @{ from = $curMonthStart; to = $curMonthEnd }
+                dataset = @{
+                    granularity = "Daily"
+                    aggregation = @{ totalCost = @{ name = "Cost"; function = "Sum" } }
+                }
+            } | ConvertTo-Json -Depth 10
+            $dResp = Invoke-RestMethod -Uri $cmUri -Headers $hdrs -Method POST -Body $dBody -TimeoutSec 60 -ErrorAction Stop
+            foreach ($row in $dResp.properties.rows) {
+                $dailyCostData += @{
+                    date   = ([datetime]::ParseExact($row[1].ToString().Substring(0,8), "yyyyMMdd", $null)).ToString("MMM dd")
+                    cost   = [math]::Round($row[0], 2)
+                    budget = 0
+                }
+            }
+        }
+        catch {
+            Write-Log "  [WARN] Daily cost query failed: $($_.Exception.Message)" "WARN"
+        }
+
+        # ── Monthly cost data (last 6 months) ──
+        $monthlyCostData = @()
+        try {
+            $sixMonthsAgo = (Get-Date -Day 1).AddMonths(-5).ToString("yyyy-MM-dd")
+            $mBody = @{
+                type = "ActualCost"
+                timeframe = "Custom"
+                timePeriod = @{ from = $sixMonthsAgo; to = $curMonthEnd }
+                dataset = @{
+                    granularity = "Monthly"
+                    aggregation = @{ totalCost = @{ name = "Cost"; function = "Sum" } }
+                }
+            } | ConvertTo-Json -Depth 10
+            $mResp = Invoke-RestMethod -Uri $cmUri -Headers $hdrs -Method POST -Body $mBody -TimeoutSec 60 -ErrorAction Stop
+            foreach ($row in $mResp.properties.rows) {
+                $monthDate = [datetime]::ParseExact($row[1].ToString().Substring(0,8), "yyyyMMdd", $null)
+                $monthlyCostData += @{
+                    month    = $monthDate.ToString("MMM yyyy")
+                    actual   = [math]::Round($row[0], 2)
+                    budget   = 0
+                    forecast = 0
+                }
+            }
+        }
+        catch {
+            Write-Log "  [WARN] Monthly cost query failed: $($_.Exception.Message)" "WARN"
+        }
+
+        # ── Savings recommendations from Azure Advisor ──
+        $savingsRecs = @()
+        try {
+            $advUri = "https://management.azure.com/subscriptions/$subId/providers/Microsoft.Advisor/recommendations?api-version=2023-01-01&`$filter=Category eq 'Cost'"
+            $advResp = Invoke-RestMethod -Uri $advUri -Headers $hdrs -Method GET -TimeoutSec 30 -ErrorAction Stop
+            $advItems = @($advResp.value)
+            Write-Log "  Advisor: $($advItems.Count) cost recommendation(s)."
+            foreach ($adv in $advItems) {
+                $props = $adv.properties
+                $savings = 0
+                if ($props.extendedProperties -and $props.extendedProperties.savingsAmount) {
+                    $savings = [math]::Round([double]$props.extendedProperties.savingsAmount, 2)
+                }
+                $savingsRecs += @{
+                    id                  = $adv.name
+                    title               = if ($props.shortDescription.solution) { $props.shortDescription.solution } else { $adv.name }
+                    description         = if ($props.shortDescription.problem) { $props.shortDescription.problem } else { "" }
+                    estimatedSavingsUSD = $savings
+                    effort              = switch ($props.impact) { "High" { "Low" } "Medium" { "Medium" } "Low" { "High" } default { "Medium" } }
+                    category            = if ($props.category) { $props.category } else { "Cost" }
+                    resourceCount       = 1
+                }
+            }
+        }
+        catch {
+            Write-Log "  [WARN] Advisor cost recommendations failed: $($_.Exception.Message)" "WARN"
+        }
+
         $finopsData = [ordered]@{
-            runDate = $today
-            serviceCosts = @(
-                @{ service = 'Virtual Machines'; currentMonth = 12450; previousMonth = 11800; trend = 5.5; color = '#3b82f6' }
-                @{ service = 'Storage'; currentMonth = 3870; previousMonth = 3650; trend = 6.0; color = '#8b5cf6' }
-                @{ service = 'AKS / Containers'; currentMonth = 14870; previousMonth = 14200; trend = 4.7; color = '#06b6d4' }
-                @{ service = 'Networking'; currentMonth = 4280; previousMonth = 4100; trend = 4.4; color = '#f97316' }
-                @{ service = 'Databases'; currentMonth = 8650; previousMonth = 8400; trend = 3.0; color = '#22c55e' }
-            )
-            subscriptionCosts = @(
-                @{ subscriptionId = $subId; subscriptionName = "Subscription $($subId.Substring(0,8))"; currentMonth = 31500; budget = 35000; forecast = 33000 }
-            )
-            teamCosts = @(
-                @{ team = 'Platform Engineering'; compute = 8200; storage = 920; networking = 1450; databases = 3200; other = 680 }
-                @{ team = 'Data Engineering'; compute = 4500; storage = 1850; networking = 380; databases = 4800; other = 420 }
-            )
-            dailyCostData = @(
-                @{ date = 'Day 1'; cost = 1680; budget = 1710 }
-                @{ date = 'Day 2'; cost = 1620; budget = 1710 }
-                @{ date = 'Day 3'; cost = 1540; budget = 1710 }
-                @{ date = 'Day 4'; cost = 1590; budget = 1710 }
-            )
-            weeklyCostData = @(
-                @{ week = 'W1'; actual = 11200; budget = 11850 }
-                @{ week = 'W2'; actual = 11500; budget = 11850 }
-                @{ week = 'W3'; actual = 11800; budget = 11850 }
-                @{ week = 'W4'; actual = 11900; budget = 11850 }
-            )
-            monthlyCostData = @(
-                @{ month = 'Month - 3'; actual = 42800; budget = 45000; forecast = 42800 }
-                @{ month = 'Month - 2'; actual = 44200; budget = 45000; forecast = 44200 }
-                @{ month = 'Month - 1'; actual = 46100; budget = 47000; forecast = 46100 }
-                @{ month = 'Current'; actual = 47500; budget = 48000; forecast = 47500 }
-            )
-            costAnomalies = @(
-                @{ id = 'a-001'; date = $today; service = 'Virtual Machines'; subscriptionName = "Sub $subId"; expectedCost = 420; actualCost = 680; severity = 'high'; explanation = 'Unexpected GPU VM provisioning' }
-            )
-            savingsRecommendations = @(
-                @{ id = 'sr-001'; title = 'Purchase Reserved Instances'; description = '1-year reserved instances would save 40%.'; estimatedSavingsUSD = 4850; effort = 'Low'; category = 'Reserved Instances'; resourceCount = 3 }
-                @{ id = 'sr-004'; title = 'Move cold storage to Archive tier'; description = 'Moving to Archive could save 65% on storage costs.'; estimatedSavingsUSD = 1640; effort = 'Medium'; category = 'Storage Optimization'; resourceCount = 1 }
-            )
+            runDate                = $today
+            serviceCosts           = $serviceCosts
+            subscriptionCosts      = @(@{
+                subscriptionId   = $subId
+                subscriptionName = $subName
+                currentMonth     = [math]::Round($totalCur, 2)
+                budget           = 0
+                forecast         = 0
+            })
+            teamCosts              = @()
+            dailyCostData          = $dailyCostData
+            weeklyCostData         = @()
+            monthlyCostData        = $monthlyCostData
+            costAnomalies          = @()
+            savingsRecommendations = $savingsRecs
         }
 
         $blobBasePath   = "assessments/$targetTenantId/$subId/$today"
         $blobLatestPath = "assessments/$targetTenantId/$subId/latest"
-        
+
         Upload-JsonBlob -BlobPath "$blobBasePath/finops.json"   -Data $finopsData -Container $containerName
         Upload-JsonBlob -BlobPath "$blobLatestPath/finops.json" -Data $finopsData -Container $containerName
-        
-        Write-Log "FinOps data uploaded for subscription $subId."
+
+        Write-Log "FinOps data uploaded for subscription $subId ($($serviceCosts.Count) services, $($savingsRecs.Count) savings recs)."
     }
     catch {
-        Write-Log "Failed to upload FinOps data for sub $subId : $_" "WARN"
+        Write-Log "Failed to collect/upload FinOps data for sub $subId : $_" "WARN"
     }
+}
+# ───────────────────────────────────────────────────────────────────────────────
+# PART 5: VMs & CONTAINERS DATA COLLECTION (ARG)
+# ───────────────────────────────────────────────────────────────────────────────
+Write-Log "--- PART 5: Collecting VMs & Containers Data ---"
+
+try {
+    Ensure-AzSessionFresh
+
+    # ── Virtual Machines ──
+    $vmQuery = @"
+Resources
+| where type =~ 'microsoft.compute/virtualmachines'
+| extend powerState = tostring(properties.extended.instanceView.powerState.code),
+         vmSize = tostring(properties.hardwareProfile.vmSize),
+         osType = tostring(properties.storageProfile.osDisk.osType),
+         osOffer = tostring(properties.storageProfile.imageReference.offer),
+         osSku = tostring(properties.storageProfile.imageReference.sku),
+         diskGB = toint(properties.storageProfile.osDisk.diskSizeGB),
+         publicIpId = tostring(properties.networkProfile.networkInterfaces[0].id)
+| project id, name, resourceGroup, subscriptionId, location,
+          vmSize, osType, osOffer, osSku, powerState, diskGB, tags
+"@
+
+    $vmRows = @(); $vmSkip = $null
+    do {
+        $vmP = @{ Query = $vmQuery; First = 1000; Subscription = $subIds; ErrorAction = 'Stop' }
+        if ($vmSkip) { $vmP['SkipToken'] = $vmSkip }
+        $vmR = Search-AzGraph @vmP
+        $vmRows += @(if ($vmR.PSObject.Properties.Name -contains 'Data') { $vmR.Data } else { $vmR })
+        $vmSkip = if ($vmR.PSObject.Properties.Name -contains 'SkipToken') { $vmR.SkipToken } else { $null }
+    } while ($vmSkip)
+
+    Write-Log "ARG: found $($vmRows.Count) VMs."
+
+    # ── AKS Clusters ──
+    $aksQuery = @"
+Resources
+| where type =~ 'microsoft.containerservice/managedclusters'
+| extend k8sVersion = tostring(properties.kubernetesVersion),
+         nodeCount = toint(properties.agentPoolProfiles[0].count),
+         powerState = tostring(properties.powerState.code),
+         tier = tostring(sku.tier),
+         networkPlugin = tostring(properties.networkProfile.networkPlugin)
+| project id, name, resourceGroup, subscriptionId, location,
+          k8sVersion, nodeCount, powerState, tier, networkPlugin, tags
+"@
+
+    $aksRows = @(); $aksSkip = $null
+    do {
+        $aksP = @{ Query = $aksQuery; First = 1000; Subscription = $subIds; ErrorAction = 'Stop' }
+        if ($aksSkip) { $aksP['SkipToken'] = $aksSkip }
+        $aksR = Search-AzGraph @aksP
+        $aksRows += @(if ($aksR.PSObject.Properties.Name -contains 'Data') { $aksR.Data } else { $aksR })
+        $aksSkip = if ($aksR.PSObject.Properties.Name -contains 'SkipToken') { $aksR.SkipToken } else { $null }
+    } while ($aksSkip)
+
+    Write-Log "ARG: found $($aksRows.Count) AKS clusters."
+
+    # Group and upload per subscription
+    $vmBySub  = $vmRows  | Group-Object -Property subscriptionId
+    $aksBySub = $aksRows | Group-Object -Property subscriptionId
+
+    foreach ($subId in $subIds) {
+        $vms = @()
+        $vmGroup = $vmBySub | Where-Object { $_.Name -eq $subId }
+        if ($vmGroup) {
+            foreach ($row in $vmGroup.Group) {
+                $status = switch -Wildcard ($row.powerState) {
+                    '*running*'      { 'Running' }
+                    '*stopped*'      { 'Stopped' }
+                    '*deallocated*'  { 'Deallocated' }
+                    default          { 'Unknown' }
+                }
+                $sizeCategory = if ($row.vmSize -match '^Standard_([A-Z]+)') { "$($Matches[1])-Series" } else { 'Other' }
+                $osDisplay = if ($row.osOffer) { "$($row.osOffer) $($row.osSku)" } else { $row.osType }
+
+                $vms += [ordered]@{
+                    id               = $row.id
+                    name             = $row.name
+                    subscriptionId   = $row.subscriptionId
+                    subscriptionName = ($allSubs | Where-Object { $_.Id -eq $row.subscriptionId } | Select-Object -First 1).Name
+                    resourceGroup    = $row.resourceGroup
+                    region           = $row.location
+                    size             = $row.vmSize
+                    sizeCategory     = $sizeCategory
+                    os               = $osDisplay
+                    osType           = $row.osType
+                    status           = $status
+                    cpuPct           = 0
+                    memoryPct        = 0
+                    diskGB           = if ($row.diskGB) { $row.diskGB } else { 0 }
+                    monthlyCostUSD   = 0
+                    publicIp         = $null
+                    tags             = if ($null -ne $row.tags) { $row.tags } else { @{} }
+                }
+            }
+        }
+
+        $clusters = @()
+        $aksGroup = $aksBySub | Where-Object { $_.Name -eq $subId }
+        if ($aksGroup) {
+            foreach ($row in $aksGroup.Group) {
+                $health = switch ($row.powerState) {
+                    'Running' { 'Healthy' }
+                    'Stopped' { 'Warning' }
+                    default   { 'Unknown' }
+                }
+                $clusters += [ordered]@{
+                    id               = $row.id
+                    name             = $row.name
+                    subscriptionId   = $row.subscriptionId
+                    subscriptionName = ($allSubs | Where-Object { $_.Id -eq $row.subscriptionId } | Select-Object -First 1).Name
+                    resourceGroup    = $row.resourceGroup
+                    region           = $row.location
+                    version          = $row.k8sVersion
+                    nodeCount        = if ($row.nodeCount) { $row.nodeCount } else { 0 }
+                    podCount         = 0
+                    podCapacity      = 0
+                    runningPods      = 0
+                    pendingPods      = 0
+                    failedPods       = 0
+                    succeededPods    = 0
+                    cpuUtilPct       = 0
+                    memUtilPct       = 0
+                    health           = $health
+                    monthlyCostUSD   = 0
+                    tags             = if ($null -ne $row.tags) { $row.tags } else { @{} }
+                }
+            }
+        }
+
+        $vcData = [ordered]@{
+            runDate        = $today
+            virtualMachines = $vms
+            aksClusters    = $clusters
+        }
+
+        $blobBasePath   = "assessments/$targetTenantId/$subId/$today"
+        $blobLatestPath = "assessments/$targetTenantId/$subId/latest"
+
+        Upload-JsonBlob -BlobPath "$blobBasePath/vms-containers.json"   -Data $vcData -Container $containerName
+        Upload-JsonBlob -BlobPath "$blobLatestPath/vms-containers.json" -Data $vcData -Container $containerName
+        Write-Log "VMs & Containers uploaded for sub $subId ($($vms.Count) VMs, $($clusters.Count) AKS)."
+    }
+}
+catch {
+    Write-Log "Failed to collect VMs & Containers: $_" "ERROR"
+}
+
+# ───────────────────────────────────────────────────────────────────────────────
+# PART 6: NETWORKS DATA COLLECTION (ARG)
+# ───────────────────────────────────────────────────────────────────────────────
+Write-Log "--- PART 6: Collecting Networks Data ---"
+
+try {
+    Ensure-AzSessionFresh
+
+    # ── Virtual Networks ──
+    $vnetQuery = @"
+Resources
+| where type =~ 'microsoft.network/virtualnetworks'
+| extend addressSpace = tostring(properties.addressSpace.addressPrefixes[0]),
+         subnetCount = array_length(properties.subnets),
+         ddosProtection = tobool(properties.enableDdosProtection),
+         dnsServers = iff(array_length(properties.dhcpOptions.dnsServers) > 0,
+                         strcat_array(properties.dhcpOptions.dnsServers, ', '), 'Azure DNS')
+| project id, name, resourceGroup, subscriptionId, location,
+          addressSpace, subnetCount, ddosProtection, dnsServers, tags
+"@
+
+    $vnetRows = @(); $vnSkip = $null
+    do {
+        $vnP = @{ Query = $vnetQuery; First = 1000; Subscription = $subIds; ErrorAction = 'Stop' }
+        if ($vnSkip) { $vnP['SkipToken'] = $vnSkip }
+        $vnR = Search-AzGraph @vnP
+        $vnetRows += @(if ($vnR.PSObject.Properties.Name -contains 'Data') { $vnR.Data } else { $vnR })
+        $vnSkip = if ($vnR.PSObject.Properties.Name -contains 'SkipToken') { $vnR.SkipToken } else { $null }
+    } while ($vnSkip)
+
+    Write-Log "ARG: found $($vnetRows.Count) VNets."
+
+    # ── NSGs ──
+    $nsgQuery = @"
+Resources
+| where type =~ 'microsoft.network/networksecuritygroups'
+| extend secRules = properties.securityRules,
+         allowRules = array_length(properties.securityRules),
+         subnetCount = array_length(properties.subnets),
+         nicCount = array_length(properties.networkInterfaces)
+| project id, name, resourceGroup, subscriptionId, location,
+          allowRules, subnetCount, nicCount, tags
+"@
+
+    $nsgRows = @(); $nsgSkip = $null
+    do {
+        $nsgP = @{ Query = $nsgQuery; First = 1000; Subscription = $subIds; ErrorAction = 'Stop' }
+        if ($nsgSkip) { $nsgP['SkipToken'] = $nsgSkip }
+        $nsgR = Search-AzGraph @nsgP
+        $nsgRows += @(if ($nsgR.PSObject.Properties.Name -contains 'Data') { $nsgR.Data } else { $nsgR })
+        $nsgSkip = if ($nsgR.PSObject.Properties.Name -contains 'SkipToken') { $nsgR.SkipToken } else { $null }
+    } while ($nsgSkip)
+
+    Write-Log "ARG: found $($nsgRows.Count) NSGs."
+
+    # ── Azure Firewalls ──
+    $fwQuery = @"
+Resources
+| where type =~ 'microsoft.network/azurefirewalls'
+| extend tier = tostring(sku.tier),
+         fwStatus = tostring(properties.provisioningState),
+         threatIntelMode = tostring(properties.threatIntelMode)
+| project id, name, resourceGroup, subscriptionId, location,
+          tier, fwStatus, threatIntelMode, tags
+"@
+
+    $fwRows = @(); $fwSkip = $null
+    do {
+        $fwP = @{ Query = $fwQuery; First = 1000; Subscription = $subIds; ErrorAction = 'Stop' }
+        if ($fwSkip) { $fwP['SkipToken'] = $fwSkip }
+        $fwR = Search-AzGraph @fwP
+        $fwRows += @(if ($fwR.PSObject.Properties.Name -contains 'Data') { $fwR.Data } else { $fwR })
+        $fwSkip = if ($fwR.PSObject.Properties.Name -contains 'SkipToken') { $fwR.SkipToken } else { $null }
+    } while ($fwSkip)
+
+    Write-Log "ARG: found $($fwRows.Count) Azure Firewalls."
+
+    # ── Load Balancers ──
+    $lbQuery = @"
+Resources
+| where type =~ 'microsoft.network/loadbalancers'
+| extend sku = tostring(sku.name),
+         lbType = iff(array_length(properties.frontendIPConfigurations) > 0
+                      and isnotnull(properties.frontendIPConfigurations[0].properties.publicIPAddress),
+                      'Public', 'Internal'),
+         backendPools = array_length(properties.backendAddressPools),
+         healthProbes = array_length(properties.probes),
+         rules = array_length(properties.loadBalancingRules)
+| project id, name, resourceGroup, subscriptionId, location,
+          sku, lbType, backendPools, healthProbes, rules, tags
+"@
+
+    $lbRows = @(); $lbSkip = $null
+    do {
+        $lbP = @{ Query = $lbQuery; First = 1000; Subscription = $subIds; ErrorAction = 'Stop' }
+        if ($lbSkip) { $lbP['SkipToken'] = $lbSkip }
+        $lbR = Search-AzGraph @lbP
+        $lbRows += @(if ($lbR.PSObject.Properties.Name -contains 'Data') { $lbR.Data } else { $lbR })
+        $lbSkip = if ($lbR.PSObject.Properties.Name -contains 'SkipToken') { $lbR.SkipToken } else { $null }
+    } while ($lbSkip)
+
+    Write-Log "ARG: found $($lbRows.Count) Load Balancers."
+
+    # Group and upload per subscription
+    $vnetBySub = $vnetRows | Group-Object -Property subscriptionId
+    $nsgBySub  = $nsgRows  | Group-Object -Property subscriptionId
+    $fwBySub   = $fwRows   | Group-Object -Property subscriptionId
+    $lbBySub   = $lbRows   | Group-Object -Property subscriptionId
+
+    foreach ($subId in $subIds) {
+        $vnets = @()
+        $vg = $vnetBySub | Where-Object { $_.Name -eq $subId }
+        if ($vg) {
+            foreach ($row in $vg.Group) {
+                $vnets += [ordered]@{
+                    id              = $row.id
+                    name            = $row.name
+                    subscriptionId  = $row.subscriptionId
+                    subscriptionName = ($allSubs | Where-Object { $_.Id -eq $row.subscriptionId } | Select-Object -First 1).Name
+                    resourceGroup   = $row.resourceGroup
+                    region          = $row.location
+                    addressSpace    = if ($row.addressSpace) { $row.addressSpace } else { '' }
+                    subnetCount     = if ($row.subnetCount) { [int]$row.subnetCount } else { 0 }
+                    peeredWith      = @()
+                    dnsServers      = if ($row.dnsServers) { $row.dnsServers } else { 'Azure DNS' }
+                    ddosProtection  = [bool]$row.ddosProtection
+                    tags            = if ($null -ne $row.tags) { $row.tags } else { @{} }
+                }
+            }
+        }
+
+        $nsgs = @()
+        $ng = $nsgBySub | Where-Object { $_.Name -eq $subId }
+        if ($ng) {
+            foreach ($row in $ng.Group) {
+                $nsgs += [ordered]@{
+                    id              = $row.id
+                    name            = $row.name
+                    subscriptionId  = $row.subscriptionId
+                    resourceGroup   = $row.resourceGroup
+                    region          = $row.location
+                    allowRules      = if ($row.allowRules) { [int]$row.allowRules } else { 0 }
+                    denyRules       = 0
+                    subnetsAttached = if ($row.subnetCount) { [int]$row.subnetCount } else { 0 }
+                    nicsAttached    = if ($row.nicCount) { [int]$row.nicCount } else { 0 }
+                    highRiskPorts   = @()
+                    defaultDeny     = $false
+                }
+            }
+        }
+
+        $firewalls = @()
+        $fg = $fwBySub | Where-Object { $_.Name -eq $subId }
+        if ($fg) {
+            foreach ($row in $fg.Group) {
+                $firewalls += [ordered]@{
+                    id               = $row.id
+                    name             = $row.name
+                    subscriptionId   = $row.subscriptionId
+                    resourceGroup    = $row.resourceGroup
+                    region           = $row.location
+                    tier             = if ($row.tier) { $row.tier } else { 'Standard' }
+                    status           = if ($row.fwStatus -eq 'Succeeded') { 'Running' } else { 'Stopped' }
+                    ruleCollections  = 0
+                    threatIntelMode  = if ($row.threatIntelMode) { $row.threatIntelMode } else { 'Off' }
+                    monthlyCostUSD   = 0
+                }
+            }
+        }
+
+        $lbs = @()
+        $lg = $lbBySub | Where-Object { $_.Name -eq $subId }
+        if ($lg) {
+            foreach ($row in $lg.Group) {
+                $lbs += [ordered]@{
+                    id            = $row.id
+                    name          = $row.name
+                    subscriptionId = $row.subscriptionId
+                    resourceGroup = $row.resourceGroup
+                    region        = $row.location
+                    sku           = if ($row.sku) { $row.sku } else { 'Basic' }
+                    type          = if ($row.lbType) { $row.lbType } else { 'Internal' }
+                    backendPools  = if ($row.backendPools) { [int]$row.backendPools } else { 0 }
+                    healthProbes  = if ($row.healthProbes) { [int]$row.healthProbes } else { 0 }
+                    rules         = if ($row.rules) { [int]$row.rules } else { 0 }
+                }
+            }
+        }
+
+        $netData = [ordered]@{
+            runDate       = $today
+            vnets         = $vnets
+            nsgs          = $nsgs
+            firewalls     = $firewalls
+            loadBalancers = $lbs
+        }
+
+        $blobBasePath   = "assessments/$targetTenantId/$subId/$today"
+        $blobLatestPath = "assessments/$targetTenantId/$subId/latest"
+
+        Upload-JsonBlob -BlobPath "$blobBasePath/networks.json"   -Data $netData -Container $containerName
+        Upload-JsonBlob -BlobPath "$blobLatestPath/networks.json" -Data $netData -Container $containerName
+        Write-Log "Networks uploaded for sub $subId ($($vnets.Count) VNets, $($nsgs.Count) NSGs, $($firewalls.Count) FWs, $($lbs.Count) LBs)."
+    }
+}
+catch {
+    Write-Log "Failed to collect Networks data: $_" "ERROR"
+}
+
+# ───────────────────────────────────────────────────────────────────────────────
+# PART 5: DEFENDER RECOMMENDATIONS (Patching via ARM REST API)
+# ───────────────────────────────────────────────────────────────────────────────
+Write-Log "--- PART 5: Verifying Defender Recommendations ---"
+
+try {
+    Ensure-AzSessionFresh
+    $secTok = Get-AzAccessToken -ResourceUrl "https://management.azure.com/" -AsSecureString -ErrorAction Stop
+    $armTok = [System.Net.NetworkCredential]::new('', $secTok.Token).Password
+
+    foreach ($s in $subIds) {
+        if ([string]::IsNullOrWhiteSpace($s)) { continue }
+        
+        $blobLatestPath = "assessments/$targetTenantId/$s/latest/defender-recs.json"
+        $blobBasePath   = "assessments/$targetTenantId/$s/$today/defender-recs.json"
+
+        Write-Log "Checking $blobLatestPath for missing Defender recommendations..."
+        $existingData = Download-JsonBlob -BlobPath $blobLatestPath -Container $containerName
+        
+        $isEmpty = $false
+        if ($null -eq $existingData -or $null -eq $existingData.recommendations) {
+            $isEmpty = $true
+        } elseif ($existingData.recommendations -is [System.Array] -or $existingData.recommendations -is [System.Collections.ICollection]) {
+            if ($existingData.recommendations.Count -eq 0) { $isEmpty = $true }
+        }
+
+        if ($isEmpty) {
+            Write-Log "  Missing or empty recommendations for sub $s. Grabbing data via assigned API permissions (REST API)..."
+            $apiRecs = @()
+            try {
+                $apiUrl = "https://management.azure.com/subscriptions/$s/providers/Microsoft.Security/assessments?api-version=2020-01-01"
+                $apiResp = Invoke-RestMethod -Uri $apiUrl -Headers @{ Authorization = "Bearer $armTok" } -Method GET -TimeoutSec 30 -ErrorAction Stop
+                
+                if ($apiResp.value) {
+                    $unhealthy = @($apiResp.value | Where-Object { $_.properties.status.code -eq 'Unhealthy' })
+                    Write-Log "  Found $($unhealthy.Count) unhealthy recommendations."
+                    
+                    $apiGrouped = $unhealthy | Group-Object -Property name
+                    foreach ($grp in $apiGrouped) {
+                        $first = $grp.Group[0]
+                        $props = $first.properties
+                        $meta  = $props.metadata
+                        
+                        $severity = if ($meta.severity) { $meta.severity.ToString().ToLower() } else { "low" }
+                        $category = "Compute"
+                        if ($meta.categories -and $meta.categories.Count -gt 0) { $category = $meta.categories[0] }
+                        
+                        $recName  = if ($props.displayName) { $props.displayName } else { $first.name }
+                        
+                        $affected = @()
+                        foreach ($row in $grp.Group) {
+                            $resId = if ($row.properties.resourceDetails.Id) { $row.properties.resourceDetails.Id } else { "" }
+                            $resName = if ($resId) { ($resId -split '/')[-1] } else { "Unknown" }
+                            $resType = "Unknown"
+                            if ($resId -match '/providers/([^/]+/[^/]+)/') { $resType = $Matches[1] }
+                            
+                            $affected += [ordered]@{
+                                id            = $resId
+                                name          = $resName
+                                type          = $resType
+                                resourceGroup = ""
+                            }
+                        }
+                        
+                        $apiRecs += [ordered]@{
+                            id                     = $first.name
+                            name                   = $recName
+                            description            = if ($meta.description) { $meta.description } else { "" }
+                            severity               = $severity
+                            category               = $category
+                            subscriptionId         = $s
+                            resourceCount          = $grp.Group.Count
+                            hasAttackPath          = if ($props.additionalData.hasAttackPaths) { [bool]$props.additionalData.hasAttackPaths } else { $false }
+                            affectedResources      = $affected
+                            remediation            = if ($meta.remediationDescription) { $meta.remediationDescription } else { "" }
+                            learnMoreUrl           = if ($meta.customAssurance) { $meta.customAssurance } else { "" }
+                            governanceAssignmentId = ""
+                        }
+                    }
+                }
+            } catch {
+                Write-Log "  [WARN] ARM REST API fallback failed for sub $s: $($_.Exception.Message)" "WARN"
+            }
+            
+            $defDataObj = [ordered]@{ runDate = $today; recommendations = $apiRecs }
+            try {
+                Upload-JsonBlob -BlobPath $blobBasePath   -Data $defDataObj -Container $containerName
+                Upload-JsonBlob -BlobPath $blobLatestPath -Data $defDataObj -Container $containerName
+                if ($apiRecs.Count -gt 0) {
+                    Write-Log "Defender Recommendations uploaded for sub $s ($($apiRecs.Count) distinct recs via API fallback)."
+                }
+            } catch {}
+        }
+    }
+}
+catch {
+    Write-Log "Failed to collect Defender Recommendations data: $_" "ERROR"
 }
 
 Write-Log "=== Unified Verification Runbook Complete ==="

@@ -54,7 +54,6 @@ export function GovernanceCard({ subscriptions, subDataMap, defaultSubId, expand
         return data.rules.filter(r => {
             if (statusFilter && r.status !== statusFilter) return false;
             // rules with subscriptionId matching selected sub are shown
-            // rgFilter applied via linked policies (approximation for demo)
             return true;
         });
     }, [data, statusFilter]);

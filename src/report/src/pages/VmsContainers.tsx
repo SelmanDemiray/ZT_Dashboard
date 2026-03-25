@@ -21,77 +21,14 @@ import {
     ArrowUpDown, Activity, Box,
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
-
-// ─── VM Data ──────────────────────────────────────────────────────────
-interface VirtualMachine {
-    id: string;
-    name: string;
-    subscriptionId: string;
-    subscriptionName: string;
-    resourceGroup: string;
-    region: string;
-    size: string;
-    sizeCategory: string;
-    os: string;
-    osType: 'Windows' | 'Linux';
-    status: 'Running' | 'Stopped' | 'Deallocated';
-    cpuPct: number;
-    memoryPct: number;
-    diskGB: number;
-    monthlyCostUSD: number;
-    publicIp: string | null;
-    tags: Record<string, string>;
-}
-
-const virtualMachines: VirtualMachine[] = [
-    { id: 'vm-001', name: 'prod-web-01', subscriptionId: 'sub-prod-001', subscriptionName: 'Production', resourceGroup: 'rg-prod-web', region: 'East US', size: 'Standard_D4s_v3', sizeCategory: 'D-Series', os: 'Ubuntu 22.04 LTS', osType: 'Linux', status: 'Running', cpuPct: 72, memoryPct: 68, diskGB: 256, monthlyCostUSD: 280.32, publicIp: '20.85.120.45', tags: { environment: 'production', team: 'platform' } },
-    { id: 'vm-002', name: 'prod-web-02', subscriptionId: 'sub-prod-001', subscriptionName: 'Production', resourceGroup: 'rg-prod-web', region: 'East US', size: 'Standard_D4s_v3', sizeCategory: 'D-Series', os: 'Ubuntu 22.04 LTS', osType: 'Linux', status: 'Running', cpuPct: 65, memoryPct: 71, diskGB: 256, monthlyCostUSD: 280.32, publicIp: '20.85.120.46', tags: { environment: 'production', team: 'platform' } },
-    { id: 'vm-003', name: 'prod-api-01', subscriptionId: 'sub-prod-001', subscriptionName: 'Production', resourceGroup: 'rg-prod-api', region: 'East US', size: 'Standard_E8s_v3', sizeCategory: 'E-Series', os: 'Windows Server 2022', osType: 'Windows', status: 'Running', cpuPct: 45, memoryPct: 82, diskGB: 512, monthlyCostUSD: 584.96, publicIp: null, tags: { environment: 'production', team: 'backend' } },
-    { id: 'vm-004', name: 'prod-db-replica', subscriptionId: 'sub-prod-001', subscriptionName: 'Production', resourceGroup: 'rg-prod-data', region: 'West US 2', size: 'Standard_E16s_v3', sizeCategory: 'E-Series', os: 'Ubuntu 20.04 LTS', osType: 'Linux', status: 'Running', cpuPct: 38, memoryPct: 91, diskGB: 1024, monthlyCostUSD: 1169.92, publicIp: null, tags: { environment: 'production', team: 'data-engineering' } },
-    { id: 'vm-005', name: 'prod-batch-01', subscriptionId: 'sub-prod-001', subscriptionName: 'Production', resourceGroup: 'rg-prod-batch', region: 'East US', size: 'Standard_F8s_v2', sizeCategory: 'F-Series', os: 'Ubuntu 22.04 LTS', osType: 'Linux', status: 'Running', cpuPct: 88, memoryPct: 42, diskGB: 128, monthlyCostUSD: 390.40, publicIp: null, tags: { environment: 'production', team: 'ml-ops' } },
-    { id: 'vm-006', name: 'staging-web-01', subscriptionId: 'sub-staging-001', subscriptionName: 'Staging', resourceGroup: 'rg-staging-web', region: 'East US 2', size: 'Standard_B2ms', sizeCategory: 'B-Series', os: 'Ubuntu 22.04 LTS', osType: 'Linux', status: 'Running', cpuPct: 22, memoryPct: 35, diskGB: 64, monthlyCostUSD: 60.74, publicIp: '20.85.121.10', tags: { environment: 'staging', team: 'qa' } },
-    { id: 'vm-007', name: 'dev-test-win', subscriptionId: 'sub-dev-001', subscriptionName: 'Development', resourceGroup: 'rg-dev-test', region: 'East US', size: 'Standard_D2s_v3', sizeCategory: 'D-Series', os: 'Windows 11 Enterprise', osType: 'Windows', status: 'Stopped', cpuPct: 0, memoryPct: 0, diskGB: 128, monthlyCostUSD: 140.16, publicIp: null, tags: { environment: 'development', team: 'frontend' } },
-    { id: 'vm-008', name: 'dev-ml-gpu', subscriptionId: 'sub-dev-001', subscriptionName: 'Development', resourceGroup: 'rg-dev-ml', region: 'South Central US', size: 'Standard_NC6s_v3', sizeCategory: 'N-Series', os: 'Ubuntu 22.04 LTS', osType: 'Linux', status: 'Deallocated', cpuPct: 0, memoryPct: 0, diskGB: 512, monthlyCostUSD: 0, publicIp: null, tags: { environment: 'development', team: 'ml-ops' } },
-    { id: 'vm-009', name: 'prod-jump-01', subscriptionId: 'sub-prod-001', subscriptionName: 'Production', resourceGroup: 'rg-prod-infra', region: 'East US', size: 'Standard_B1ms', sizeCategory: 'B-Series', os: 'Windows Server 2022', osType: 'Windows', status: 'Running', cpuPct: 12, memoryPct: 45, diskGB: 32, monthlyCostUSD: 15.33, publicIp: '20.85.122.100', tags: { environment: 'production', team: 'infrastructure' } },
-    { id: 'vm-010', name: 'prod-monitoring', subscriptionId: 'sub-prod-001', subscriptionName: 'Production', resourceGroup: 'rg-prod-infra', region: 'East US', size: 'Standard_D2s_v3', sizeCategory: 'D-Series', os: 'Ubuntu 22.04 LTS', osType: 'Linux', status: 'Running', cpuPct: 55, memoryPct: 62, diskGB: 128, monthlyCostUSD: 140.16, publicIp: null, tags: { environment: 'production', team: 'infrastructure' } },
-];
-
-// ─── AKS Cluster Data ─────────────────────────────────────────────────
-interface AksCluster {
-    id: string;
-    name: string;
-    subscriptionId: string;
-    subscriptionName: string;
-    resourceGroup: string;
-    region: string;
-    version: string;
-    nodeCount: number;
-    podCount: number;
-    podCapacity: number;
-    runningPods: number;
-    pendingPods: number;
-    failedPods: number;
-    succeededPods: number;
-    cpuUtilPct: number;
-    memUtilPct: number;
-    health: 'Healthy' | 'Warning' | 'Critical';
-    monthlyCostUSD: number;
-    tags: Record<string, string>;
-}
-
-const aksClusters: AksCluster[] = [
-    { id: 'aks-001', name: 'prod-aks-east', subscriptionId: 'sub-prod-001', subscriptionName: 'Production', resourceGroup: 'rg-prod-aks', region: 'East US', version: '1.29.2', nodeCount: 12, podCount: 186, podCapacity: 240, runningPods: 172, pendingPods: 8, failedPods: 2, succeededPods: 4, cpuUtilPct: 68, memUtilPct: 74, health: 'Healthy', monthlyCostUSD: 4250.00, tags: { environment: 'production', team: 'platform' } },
-    { id: 'aks-002', name: 'prod-aks-west', subscriptionId: 'sub-prod-001', subscriptionName: 'Production', resourceGroup: 'rg-prod-aks', region: 'West US 2', version: '1.29.2', nodeCount: 8, podCount: 124, podCapacity: 160, runningPods: 115, pendingPods: 3, failedPods: 0, succeededPods: 6, cpuUtilPct: 55, memUtilPct: 62, health: 'Healthy', monthlyCostUSD: 2840.00, tags: { environment: 'production', team: 'platform' } },
-    { id: 'aks-003', name: 'prod-ml-cluster', subscriptionId: 'sub-prod-001', subscriptionName: 'Production', resourceGroup: 'rg-prod-ml', region: 'East US', version: '1.28.5', nodeCount: 6, podCount: 42, podCapacity: 120, runningPods: 38, pendingPods: 2, failedPods: 1, succeededPods: 1, cpuUtilPct: 82, memUtilPct: 88, health: 'Warning', monthlyCostUSD: 5680.00, tags: { environment: 'production', team: 'ml-ops' } },
-    { id: 'aks-004', name: 'staging-aks', subscriptionId: 'sub-staging-001', subscriptionName: 'Staging', resourceGroup: 'rg-staging-aks', region: 'East US 2', version: '1.29.2', nodeCount: 4, podCount: 58, podCapacity: 80, runningPods: 52, pendingPods: 4, failedPods: 0, succeededPods: 2, cpuUtilPct: 35, memUtilPct: 42, health: 'Healthy', monthlyCostUSD: 1420.00, tags: { environment: 'staging', team: 'qa' } },
-    { id: 'aks-005', name: 'dev-aks-sandbox', subscriptionId: 'sub-dev-001', subscriptionName: 'Development', resourceGroup: 'rg-dev-aks', region: 'East US', version: '1.30.0', nodeCount: 3, podCount: 28, podCapacity: 60, runningPods: 22, pendingPods: 1, failedPods: 3, succeededPods: 2, cpuUtilPct: 25, memUtilPct: 30, health: 'Critical', monthlyCostUSD: 680.00, tags: { environment: 'development', team: 'frontend' } },
-];
+import type { VirtualMachine, AksCluster } from '@/types/assessment';
+import { fetchVmsContainers } from '@/services/blobService';
 
 const STATUS_COLORS: Record<string, string> = {
-    Running: '#22c55e', Stopped: '#f59e0b', Deallocated: '#94a3b8',
+    Running: '#22c55e', Stopped: '#f59e0b', Deallocated: '#94a3b8', Unknown: '#94a3b8',
 };
 const HEALTH_COLORS: Record<string, string> = {
-    Healthy: '#22c55e', Warning: '#f59e0b', Critical: '#ef4444',
+    Healthy: '#22c55e', Warning: '#f59e0b', Critical: '#ef4444', Unknown: '#94a3b8',
 };
 const OS_COLORS = ['#3b82f6', '#f97316'];
 const POD_COLORS = ['#22c55e', '#f59e0b', '#ef4444', '#94a3b8'];
@@ -100,15 +37,35 @@ type VmSortField = 'name' | 'cpuPct' | 'memoryPct' | 'monthlyCostUSD';
 type AksSortField = 'name' | 'nodeCount' | 'cpuUtilPct' | 'monthlyCostUSD';
 
 export default function VmsContainers() {
-    const { filters, dispatch, availableSubscriptions } = useGlobalFilters();
+    const { filters, dispatch, availableSubscriptions, availableDates } = useGlobalFilters();
     const { settings } = useSettings();
     const [vmSort, setVmSort] = React.useState<{ field: VmSortField; dir: 'asc' | 'desc' }>({ field: 'cpuPct', dir: 'desc' });
     const [aksSort, setAksSort] = React.useState<{ field: AksSortField; dir: 'asc' | 'desc' }>({ field: 'nodeCount', dir: 'desc' });
     const [statusFilter, setStatusFilter] = React.useState('all');
 
+    // ─── Fetch blob data ──────────────────────────────────────────────
+    const [allVms, setAllVms] = React.useState<VirtualMachine[]>([]);
+    const [allAks, setAllAks] = React.useState<AksCluster[]>([]);
+
+    React.useEffect(() => {
+        if (!filters.tenantId || availableSubscriptions.length === 0 || availableDates.length === 0) {
+            setAllVms([]); setAllAks([]); return;
+        }
+        let cancelled = false;
+        const tasks = availableSubscriptions.map(sub =>
+            fetchVmsContainers(filters.tenantId, sub.id, 'latest').catch(() => null)
+        );
+        Promise.all(tasks).then(results => {
+            if (cancelled) return;
+            setAllVms(results.flatMap(r => r?.virtualMachines ?? []));
+            setAllAks(results.flatMap(r => r?.aksClusters ?? []));
+        });
+        return () => { cancelled = true; };
+    }, [filters.tenantId, availableSubscriptions, availableDates]);
+
     // ─── Filter VMs ───────────────────────────────────────────────────
     const filteredVms = React.useMemo(() => {
-        let result = virtualMachines;
+        let result = allVms;
         if (filters.subscriptionId) result = result.filter(v => v.subscriptionId === filters.subscriptionId);
         if (filters.resourceGroupId) result = result.filter(v => v.resourceGroup === filters.resourceGroupId);
         if (filters.team) {
@@ -120,7 +77,7 @@ export default function VmsContainers() {
         }
         if (statusFilter !== 'all') result = result.filter(v => v.status === statusFilter);
         return result;
-    }, [filters, settings, statusFilter]);
+    }, [allVms, filters, settings, statusFilter]);
 
     const sortedVms = React.useMemo(() => {
         const arr = [...filteredVms];
@@ -140,7 +97,7 @@ export default function VmsContainers() {
 
     // ─── Filter AKS ───────────────────────────────────────────────────
     const filteredAks = React.useMemo(() => {
-        let result = aksClusters;
+        let result = allAks;
         if (filters.subscriptionId) result = result.filter(c => c.subscriptionId === filters.subscriptionId);
         if (filters.resourceGroupId) result = result.filter(c => c.resourceGroup === filters.resourceGroupId);
         if (filters.team) {
@@ -151,7 +108,7 @@ export default function VmsContainers() {
             }
         }
         return result;
-    }, [filters, settings]);
+    }, [allAks, filters, settings]);
 
     const sortedAks = React.useMemo(() => {
         const arr = [...filteredAks];
