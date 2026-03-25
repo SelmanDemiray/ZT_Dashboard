@@ -35,7 +35,7 @@ foreach ($sp in $standardPaths) {
 
 
 # ─── Module Validation ────────────────────────────────────────────────────────
-$requiredModules = @("Az.Accounts", "Az.ResourceGraph", "Az.Resources")
+$requiredModules = @("Az.Accounts", "Az.ResourceGraph")
 foreach ($mod in $requiredModules) {
     if (-not (Get-Module -Name $mod -ListAvailable)) {
         Write-Log "Required module '$mod' not found. Attempting import..." "WARN"
@@ -182,7 +182,8 @@ function Invoke-WithRetry {
     param(
         [Parameter(Mandatory=$true)]
         [scriptblock]$Action,
-        [int]$MaxRetries = 3
+        [int]$MaxRetries = 5,
+        [int]$BaseSleep = 15
     )
     $attempt = 1
     while ($true) {
@@ -191,9 +192,19 @@ function Invoke-WithRetry {
             break
         } catch {
             $msg = $_.Exception.Message
-            if ($msg -match '429|Too Many Requests') {
+            $is429 = (($msg -match '429|Too Many Requests') -or ($null -ne $_.Exception.Response -and [int]$_.Exception.Response.StatusCode -eq 429))
+
+            if ($is429) {
                 if ($attempt -ge $MaxRetries) { throw }
-                $sleepSecs = $attempt * 5
+                
+                $sleepSecs = $attempt * $BaseSleep
+                if ($null -ne $_.Exception.Response -and $null -ne $_.Exception.Response.Headers['Retry-After']) {
+                    $retryAfter = 0
+                    if ([int]::TryParse($_.Exception.Response.Headers['Retry-After'], [ref]$retryAfter)) {
+                        if ($retryAfter -gt 0 -and $retryAfter -lt 300) { $sleepSecs = $retryAfter + 5 }
+                    }
+                }
+
                 Write-Log "  [WARN] Rate limit (429) hit. Retrying in $sleepSecs seconds... (Attempt $attempt/$MaxRetries)" "WARN"
                 Start-Sleep -Seconds $sleepSecs
                 $attempt++
@@ -392,7 +403,7 @@ $missingLog  = @()
             catch {
                 $msg = $_.Exception.Message
                 if ($msg -match '401|403|Unauthorized|Forbidden') {
-                    Write-Log " -> Access denied or lacking permissions for '$propName' (API App-Only restrictions). Skipping." "INFO"
+                    Write-Log " -> Expected App-Only permission restriction for '$propName'. Skipping safely." "INFO"
                 } else {
                     Write-Log " -> Call failed for '$propName': $msg" "WARN"
                     $missingLog += [ordered]@{ Timestamp = $dateString; Component = $propName; Endpoint = $endpoint; Error = $msg }
@@ -593,37 +604,39 @@ Resources
             $txn30d = 0; $egressGB = 0; $ingressGB = 0
             try {
                 $metricEnd   = [DateTime]::UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ")
-                $metricStart = [DateTime]::UtcNow.AddDays(-30).ToString("yyyy-MM-ddTHH:mm:ssZ")
+                $metricStart = [DateTime]::UtcNow.AddDays(-28).ToString("yyyy-MM-ddTHH:mm:ssZ")
+                $tsUri       = "$([uri]::EscapeDataString($metricStart))/$([uri]::EscapeDataString($metricEnd))"
+
                 $secToken    = Get-AzAccessToken -ResourceUrl "https://management.azure.com" -AsSecureString -ErrorAction Stop
                 $armToken    = [System.Net.NetworkCredential]::new('', $secToken.Token).Password
 
                 # Blob capacity (latest value)
-                $capUri = "https://management.azure.com$($row.id)/blobServices/default/providers/Microsoft.Insights/metrics?api-version=2023-10-01&metricnames=BlobCapacity&timespan=$metricStart/$metricEnd&interval=P1D&aggregation=Average"
-                $capResp = Invoke-RestMethod -Uri $capUri -Headers @{Authorization="Bearer $armToken"} -Method GET -TimeoutSec 30 -ErrorAction SilentlyContinue
+                $capUri = "https://management.azure.com$($row.id)/blobServices/default/providers/Microsoft.Insights/metrics?api-version=2018-01-01&metricnames=BlobCapacity&timespan=$tsUri&interval=P1D&aggregation=Average"
+                $capResp = Invoke-WithRetry -Action { Invoke-RestMethod -Uri $capUri -Headers @{Authorization="Bearer $armToken"} -Method GET -TimeoutSec 30 -ErrorAction Stop }
                 if ($capResp.value -and $capResp.value[0].timeseries -and $capResp.value[0].timeseries[0].data) {
                     $lastVal = ($capResp.value[0].timeseries[0].data | Where-Object { $null -ne $_.average } | Select-Object -Last 1).average
                     if ($lastVal) { $blobCap = [math]::Round($lastVal / 1GB, 2) }
                 }
 
-                # Transactions (sum over 30d)
-                $txnUri = "https://management.azure.com$($row.id)/providers/Microsoft.Insights/metrics?api-version=2023-10-01&metricnames=Transactions&timespan=$metricStart/$metricEnd&interval=P1D&aggregation=Total"
-                $txnResp = Invoke-RestMethod -Uri $txnUri -Headers @{Authorization="Bearer $armToken"} -Method GET -TimeoutSec 30 -ErrorAction SilentlyContinue
+                # Transactions (sum over 28d)
+                $txnUri = "https://management.azure.com$($row.id)/providers/Microsoft.Insights/metrics?api-version=2018-01-01&metricnames=Transactions&timespan=$tsUri&interval=P1D&aggregation=Total"
+                $txnResp = Invoke-WithRetry -Action { Invoke-RestMethod -Uri $txnUri -Headers @{Authorization="Bearer $armToken"} -Method GET -TimeoutSec 30 -ErrorAction Stop }
                 if ($txnResp.value -and $txnResp.value[0].timeseries -and $txnResp.value[0].timeseries[0].data) {
                     $txn30d = ($txnResp.value[0].timeseries[0].data | ForEach-Object { $_.total } | Measure-Object -Sum).Sum
                     if ($null -eq $txn30d) { $txn30d = 0 }
                 }
 
-                # Egress (sum over 30d)
-                $egUri = "https://management.azure.com$($row.id)/providers/Microsoft.Insights/metrics?api-version=2023-10-01&metricnames=Egress&timespan=$metricStart/$metricEnd&interval=P1D&aggregation=Total"
-                $egResp = Invoke-RestMethod -Uri $egUri -Headers @{Authorization="Bearer $armToken"} -Method GET -TimeoutSec 30 -ErrorAction SilentlyContinue
+                # Egress (sum over 28d)
+                $egUri = "https://management.azure.com$($row.id)/providers/Microsoft.Insights/metrics?api-version=2018-01-01&metricnames=Egress&timespan=$tsUri&interval=P1D&aggregation=Total"
+                $egResp = Invoke-WithRetry -Action { Invoke-RestMethod -Uri $egUri -Headers @{Authorization="Bearer $armToken"} -Method GET -TimeoutSec 30 -ErrorAction Stop }
                 if ($egResp.value -and $egResp.value[0].timeseries -and $egResp.value[0].timeseries[0].data) {
                     $egTotal = ($egResp.value[0].timeseries[0].data | ForEach-Object { $_.total } | Measure-Object -Sum).Sum
                     if ($egTotal) { $egressGB = [math]::Round($egTotal / 1GB, 2) }
                 }
 
-                # Ingress (sum over 30d)
-                $igUri = "https://management.azure.com$($row.id)/providers/Microsoft.Insights/metrics?api-version=2023-10-01&metricnames=Ingress&timespan=$metricStart/$metricEnd&interval=P1D&aggregation=Total"
-                $igResp = Invoke-RestMethod -Uri $igUri -Headers @{Authorization="Bearer $armToken"} -Method GET -TimeoutSec 30 -ErrorAction SilentlyContinue
+                # Ingress (sum over 28d)
+                $igUri = "https://management.azure.com$($row.id)/providers/Microsoft.Insights/metrics?api-version=2018-01-01&metricnames=Ingress&timespan=$tsUri&interval=P1D&aggregation=Total"
+                $igResp = Invoke-WithRetry -Action { Invoke-RestMethod -Uri $igUri -Headers @{Authorization="Bearer $armToken"} -Method GET -TimeoutSec 30 -ErrorAction Stop }
                 if ($igResp.value -and $igResp.value[0].timeseries -and $igResp.value[0].timeseries[0].data) {
                     $igTotal = ($igResp.value[0].timeseries[0].data | ForEach-Object { $_.total } | Measure-Object -Sum).Sum
                     if ($igTotal) { $ingressGB = [math]::Round($igTotal / 1GB, 2) }
@@ -735,7 +748,7 @@ foreach ($subId in $subIds) {
 
         $curCosts = @{}
         try {
-            Start-Sleep -Seconds 1
+            Start-Sleep -Seconds 5
             $cmResp = Invoke-WithRetry -Action { Invoke-RestMethod -Uri $cmUri -Headers $hdrs -Method POST -Body $cmBody -TimeoutSec 60 -ErrorAction Stop }
             foreach ($row in $cmResp.properties.rows) {
                 $svcName = $row[1]
@@ -751,7 +764,7 @@ foreach ($subId in $subIds) {
         # Previous month
         $prevCosts = @{}
         try {
-            Start-Sleep -Seconds 2
+            Start-Sleep -Seconds 5
             $pmBody = @{
                 type = "ActualCost"
                 timeframe = "Custom"
@@ -797,7 +810,7 @@ foreach ($subId in $subIds) {
         # ── Daily cost data (current month) ──
         $dailyCostData = @()
         try {
-            Start-Sleep -Seconds 2
+            Start-Sleep -Seconds 5
             $dBody = @{
                 type = "ActualCost"
                 timeframe = "Custom"
@@ -870,7 +883,7 @@ foreach ($subId in $subIds) {
         # ── Monthly cost data (last 6 months) ──
         $monthlyCostData = @()
         try {
-            Start-Sleep -Seconds 2
+            Start-Sleep -Seconds 5
             $sixMonthsAgo = (Get-Date -Day 1).AddMonths(-5).ToString("yyyy-MM-dd")
             $mBody = @{
                 type = "ActualCost"
@@ -905,7 +918,7 @@ foreach ($subId in $subIds) {
         # ── Team Costs (by Resource Group) ──
         $teamCosts = @()
         try {
-            Start-Sleep -Seconds 2
+            Start-Sleep -Seconds 5
             $rgBody = @{
                 type = "ActualCost"
                 timeframe = "Custom"
