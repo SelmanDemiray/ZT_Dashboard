@@ -1,5 +1,5 @@
 import React from "react";
-import { MonitorSmartphone, Users, User, Luggage, Monitor, Layers3, Building2, ShieldCheck, CircleCheckBig } from "lucide-react";
+import { Building2, ShieldCheck, CircleCheckBig, Server, Container, Database, Network, CircleDollarSign, Activity } from "lucide-react";
 
 import {
     PolarAngleAxis,
@@ -29,20 +29,79 @@ import {
 import { useGlobalFilters } from "@/contexts/GlobalFilterContext";
 import { GlobalFilters } from "@/components/GlobalFilters";
 
-import { formatNumber, metricDescriptions } from "@/lib/format-utils";
+import { formatNumber } from "@/lib/format-utils";
 import { OverviewCards } from "@/components/overview-cards";
+import { fetchVmsContainers, fetchNetworks, fetchStorageAccounts, fetchFinOps } from "@/services/blobService";
 
 export default function Dashboard() {
-    const { reportData, filteredTests, availableTenants, filters, dispatch } = useGlobalFilters();
+    const [totalVms, setTotalVms] = React.useState<number>(0);
+    const [totalAks, setTotalAks] = React.useState<number>(0);
+    const [totalStorage, setTotalStorage] = React.useState<number>(0);
+    const [totalVnets, setTotalVnets] = React.useState<number>(0);
+    const [monthlyCost, setMonthlyCost] = React.useState<number>(0);
+    const [loadingMetrics, setLoadingMetrics] = React.useState<boolean>(true);
+
+    const { reportData, filteredTests, availableTenants, availableSubscriptions, availableDates, filters, dispatch } = useGlobalFilters();
+
+    React.useEffect(() => {
+        if (!filters.tenantId || availableSubscriptions.length === 0 || availableDates.length === 0) {
+            setTotalVms(0); setTotalAks(0); setTotalStorage(0); setTotalVnets(0); setMonthlyCost(0);
+            setLoadingMetrics(false);
+            return;
+        }
+        let cancelled = false;
+        
+        let targetSubs = availableSubscriptions;
+        if (filters.subscriptionId) {
+            targetSubs = targetSubs.filter(s => s.id === filters.subscriptionId);
+        }
+
+        const vmTasks = targetSubs.map(sub => fetchVmsContainers(filters.tenantId, sub.id, 'latest').catch(() => null));
+        const netTasks = targetSubs.map(sub => fetchNetworks(filters.tenantId, sub.id, 'latest').catch(() => null));
+        const storageTasks = targetSubs.map(sub => fetchStorageAccounts(filters.tenantId, sub.id, 'latest').catch(() => null));
+        const finopsTasks = targetSubs.map(sub => fetchFinOps(filters.tenantId, sub.id, 'latest').catch(() => null));
+
+        Promise.all([
+            Promise.all(vmTasks),
+            Promise.all(netTasks),
+            Promise.all(storageTasks),
+            Promise.all(finopsTasks)
+        ]).then(([vmResults, netResults, storageResults, finopsResults]) => {
+            if (cancelled) return;
+            
+            const vms = vmResults.flatMap(r => r?.virtualMachines ?? []).length;
+            const aks = vmResults.flatMap(r => r?.aksClusters ?? []).length;
+            const nets = netResults.flatMap(r => r?.vnets ?? []).length;
+            const storage = storageResults.flatMap(r => r?.accounts ?? []).length;
+            
+            const costs = finopsResults.flatMap(r => r?.subscriptionCosts ?? []);
+            const monthCost = costs.reduce((s, c) => s + (c.currentMonth || 0), 0);
+            
+            setTotalVms(vms);
+            setTotalAks(aks);
+            setTotalVnets(nets);
+            setTotalStorage(storage);
+            setMonthlyCost(monthCost);
+            setLoadingMetrics(false);
+        });
+
+        return () => { cancelled = true; };
+    }, [filters.tenantId, filters.subscriptionId, availableSubscriptions, availableDates]);
+
+    const formatCurrency = (val: number) => {
+        if (val >= 1000000) return `$${(val / 1000000).toFixed(1)}M`;
+        if (val >= 1000) return `$${(val / 1000).toFixed(1)}K`;
+        return `$${Math.round(val)}`;
+    };
 
     const tenantMetrics = React.useMemo(() => [
-        { label: 'Users', value: reportData.TenantInfo?.TenantOverview?.UserCount, icon: User, color: '#3b82f6', bg: 'from-blue-500/15 to-blue-500/5', ring: '#3b82f625', desc: metricDescriptions.users },
-        { label: 'Guests', value: reportData.TenantInfo?.TenantOverview?.GuestCount, icon: Luggage, color: '#8b5cf6', bg: 'from-violet-500/15 to-violet-500/5', ring: '#8b5cf625', desc: metricDescriptions.guests },
-        { label: 'Groups', value: reportData.TenantInfo?.TenantOverview?.GroupCount, icon: Users, color: '#a855f7', bg: 'from-purple-500/15 to-purple-500/5', ring: '#a855f725', desc: metricDescriptions.groups },
-        { label: 'Apps', value: reportData.TenantInfo?.TenantOverview?.ApplicationCount, icon: Layers3, color: '#ec4899', bg: 'from-pink-500/15 to-pink-500/5', ring: '#ec489925', desc: metricDescriptions.apps },
-        { label: 'Devices', value: reportData.TenantInfo?.TenantOverview?.DeviceCount, icon: MonitorSmartphone, color: '#f97316', bg: 'from-orange-500/15 to-orange-500/5', ring: '#f9731625', desc: metricDescriptions.devices },
-        { label: 'Managed', value: reportData.TenantInfo?.TenantOverview?.ManagedDeviceCount, icon: Monitor, color: '#22c55e', bg: 'from-emerald-500/15 to-emerald-500/5', ring: '#22c55e25', desc: metricDescriptions.managed },
-    ], [reportData.TenantInfo?.TenantOverview]);
+        { label: 'Total VMs', value: loadingMetrics ? '...' : totalVms, icon: Server, color: '#3b82f6', bg: 'from-blue-500/15 to-blue-500/5', ring: '#3b82f625', desc: 'Total number of virtual machines across scope' },
+        { label: 'AKS Clusters', value: loadingMetrics ? '...' : totalAks, icon: Container, color: '#8b5cf6', bg: 'from-violet-500/15 to-violet-500/5', ring: '#8b5cf625', desc: 'Total number of Azure Kubernetes Service clusters' },
+        { label: 'Storage Accounts', value: loadingMetrics ? '...' : totalStorage, icon: Database, color: '#a855f7', bg: 'from-purple-500/15 to-purple-500/5', ring: '#a855f725', desc: 'Total number of Azure Storage Accounts' },
+        { label: 'Virtual Networks', value: loadingMetrics ? '...' : totalVnets, icon: Network, color: '#ec4899', bg: 'from-pink-500/15 to-pink-500/5', ring: '#ec489925', desc: 'Total number of VNets deployed' },
+        { label: 'Monthly Cost', value: loadingMetrics ? '...' : formatCurrency(monthlyCost), icon: CircleDollarSign, color: '#f97316', bg: 'from-orange-500/15 to-orange-500/5', ring: '#f9731625', desc: 'Aggregated monthly cloud spend' },
+        { label: 'Environments', value: availableSubscriptions.length, icon: Activity, color: '#22c55e', bg: 'from-emerald-500/15 to-emerald-500/5', ring: '#22c55e25', desc: 'Total active subscriptions matching filters' },
+    ], [totalVms, totalAks, totalStorage, totalVnets, monthlyCost, loadingMetrics, availableSubscriptions.length]);
 
     const tenantDetails = React.useMemo(() => [
         { label: 'Tenant ID', value: reportData.TenantId || 'Not Available', mono: true },
@@ -170,7 +229,7 @@ export default function Dashboard() {
                                         <div className="min-w-0">
                                             <p className="text-[10px] text-muted-foreground font-medium">{label}</p>
                                             <p className="text-lg font-bold tabular-nums leading-none stat-glow" style={{ color }}>
-                                                {formatNumber(value)}
+                                                {typeof value === 'number' ? formatNumber(value) : value}
                                             </p>
                                         </div>
                                     </div>

@@ -245,11 +245,72 @@ Write-Log "Downloading $reportPath..."
 $reportData = Download-JsonBlob -BlobPath $reportPath -Container $containerName
 
 if (-not $reportData -or -not $reportData.TenantInfo) {
-    Write-Log "Report data missing or invalid format. Skipping Graph App-Only fixes." "WARN"
+    Write-Log "Report data missing or invalid format. Generating new skeleton report-data.json..." "WARN"
+    
+    $userCount = 0; $guestCount = 0; $groupCount = 0; $appCount = 0; $devCount = 0
+    try {
+        $uResp  = Invoke-MgGraphRequest -Uri "https://graph.microsoft.com/v1.0/users?`$count=true" -Method GET -Headers @{ConsistencyLevel="eventual"} -ErrorAction SilentlyContinue
+        if ($null -ne $uResp."@odata.count") { $userCount = [int]$uResp."@odata.count" }
+        
+        $gResp  = Invoke-MgGraphRequest -Uri "https://graph.microsoft.com/v1.0/users?`$filter=userType eq 'Guest'&`$count=true" -Method GET -Headers @{ConsistencyLevel="eventual"} -ErrorAction SilentlyContinue
+        if ($null -ne $gResp."@odata.count") { $guestCount = [int]$gResp."@odata.count" }
+        
+        $grResp = Invoke-MgGraphRequest -Uri "https://graph.microsoft.com/v1.0/groups?`$count=true" -Method GET -Headers @{ConsistencyLevel="eventual"} -ErrorAction SilentlyContinue
+        if ($null -ne $grResp."@odata.count") { $groupCount = [int]$grResp."@odata.count" }
+        
+        $aResp  = Invoke-MgGraphRequest -Uri "https://graph.microsoft.com/v1.0/applications?`$count=true" -Method GET -Headers @{ConsistencyLevel="eventual"} -ErrorAction SilentlyContinue
+        if ($null -ne $aResp."@odata.count") { $appCount = [int]$aResp."@odata.count" }
+        
+        $dResp  = Invoke-MgGraphRequest -Uri "https://graph.microsoft.com/v1.0/devices?`$count=true" -Method GET -Headers @{ConsistencyLevel="eventual"} -ErrorAction SilentlyContinue
+        if ($null -ne $dResp."@odata.count") { $devCount = [int]$dResp."@odata.count" }
+    } catch {
+        Write-Log "  [WARN] Graph API /v1.0 counts queried failed: $($_.Exception.Message)" "WARN"
+    }
+
+    $tenantOverview = [ordered]@{
+        UserCount          = $userCount
+        GuestCount         = $guestCount
+        GroupCount         = $groupCount
+        ApplicationCount   = $appCount
+        DeviceCount        = $devCount
+        ManagedDeviceCount = 0
+    }
+
+    $tInfo = [PSCustomObject]@{
+        TenantOverview          = $tenantOverview
+        DeviceOverview          = $null
+        ConfigWindowsEnrollment = @()
+        DeviceEnrollmentRestriction = @()
+        DeviceCompliancePolicies = @()
+        DeviceAppProtectionPolicies = @()
+    }
+
+    $reportData = [PSCustomObject]@{
+        ExecutedAt        = (Get-Date).ToString("o")
+        TenantId          = $targetTenantId
+        TenantName        = "Verified Tenant"
+        Domain            = ""
+        Account           = ""
+        CurrentVersion    = "1.0"
+        LatestVersion     = "1.0"
+        Tests             = @()
+        TenantInfo        = $tInfo
+        TestResultSummary = [ordered]@{
+            StoragePassed=0;       StorageTotal=0;
+            VmsContainersPassed=0; VmsContainersTotal=0;
+            NetworksPassed=0;      NetworksTotal=0;
+            FinOpsPassed=0;        FinOpsTotal=0;
+        }
+        EndOfJson         = "EndOfJson"
+    }
+    $dataUpdated = $true
 }
 else {
-    $missingLog  = @()
     $dataUpdated = $false
+}
+
+$missingLog  = @()
+
 
     $endpointsToCheck = @(
         @{ Key = "ConfigWindowsEnrollment";        Endpoint = "https://graph.microsoft.com/beta/policies/mobileDeviceManagementPolicies" },
@@ -328,7 +389,6 @@ else {
         Upload-JsonBlob -BlobPath $reportPath -Data $reportData -Container $containerName
         Write-Log "Successfully updated $reportPath."
     }
-}
 
 
 # ───────────────────────────────────────────────────────────────────────────────
@@ -427,7 +487,7 @@ $finalData = [ordered]@{
     mapping     = $flatMapping
 }
 
-$blobMapPath = "$targetTenantId/policy-mapping.json"
+$blobMapPath = "assessments/$targetTenantId/policy-mapping.json"
 Write-Log "Uploading policy mapping --> container='$containerName'  path='$blobMapPath'"
 
 try {
@@ -692,6 +752,12 @@ foreach ($subId in $subIds) {
         $totalCur  = ($curCosts.Values  | Measure-Object -Sum).Sum
         $totalPrev = ($prevCosts.Values | Measure-Object -Sum).Sum
 
+        # ── Budget & Forecast ──
+        $daysInMonth = [DateTime]::DaysInMonth((Get-Date).Year, (Get-Date).Month)
+        $dayToday = (Get-Date).Day
+        $subForecast = if ($dayToday -gt 0) { [math]::Round(($totalCur / $dayToday) * $daysInMonth, 2) } else { $totalCur }
+        $subBudget = if ($totalPrev -gt 0) { $totalPrev } else { $totalCur }
+
         # ── Daily cost data (current month) ──
         $dailyCostData = @()
         try {
@@ -709,13 +775,53 @@ foreach ($subId in $subIds) {
                 $dailyCostData += @{
                     date   = ([datetime]::ParseExact($row[1].ToString().Substring(0,8), "yyyyMMdd", $null)).ToString("MMM dd")
                     cost   = [math]::Round($row[0], 2)
-                    budget = 0
+                    budget = [math]::Round(($subBudget / $daysInMonth), 2)
                 }
             }
         }
         catch {
             Write-Log "  [WARN] Daily cost query failed: $($_.Exception.Message)" "WARN"
         }
+
+        # ── Weekly cost data (from daily) ──
+        $weeklyCostData = @()
+        try {
+            $startIndex = 0
+            while ($startIndex -lt $dailyCostData.Count) {
+                $endIndex = [math]::Min($startIndex + 6, $dailyCostData.Count - 1)
+                $group = $dailyCostData[$startIndex..$endIndex]
+                $wCost = ($group | Measure-Object -Property cost -Sum).Sum
+                $firstDate = $group[0].date
+                $lastDate  = $group[-1].date
+                $weeklyCostData += @{
+                    week   = "$firstDate - $lastDate"
+                    actual = [math]::Round($wCost, 2)
+                    budget = [math]::Round(($subBudget / 4.3), 2)
+                }
+                $startIndex += 7
+            }
+        } catch { }
+
+        # ── Cost Anomalies (from daily) ──
+        $costAnomalies = @()
+        try {
+            for ($i = 7; $i -lt $dailyCostData.Count; $i++) {
+                $recentAvg = ($dailyCostData[($i-7)..($i-1)] | Measure-Object -Property cost -Average).Average
+                $dayCost = $dailyCostData[$i].cost
+                if ($recentAvg -gt 10 -and $dayCost -gt ($recentAvg * 1.5)) {
+                    $sev = if ($dayCost -gt ($recentAvg * 2)) { "high" } else { "medium" }
+                    $costAnomalies += @{
+                        id           = [guid]::NewGuid().ToString()
+                        service      = "Subscription Aggregate Spike"
+                        date         = $dailyCostData[$i].date
+                        expectedCost = [math]::Round($recentAvg, 2)
+                        actualCost   = $dayCost
+                        explanation  = "Daily spend spiked to `$$dayCost, exceeding the 7-day average of `$$([math]::Round($recentAvg, 2))."
+                        severity     = $sev
+                    }
+                }
+            }
+        } catch { }
 
         # ── Monthly cost data (last 6 months) ──
         $monthlyCostData = @()
@@ -736,13 +842,56 @@ foreach ($subId in $subIds) {
                 $monthlyCostData += @{
                     month    = $monthDate.ToString("MMM yyyy")
                     actual   = [math]::Round($row[0], 2)
-                    budget   = 0
-                    forecast = 0
+                    budget   = [math]::Round($subBudget, 2)
+                    forecast = if ($monthDate.Month -eq (Get-Date).Month) { [math]::Round($subForecast, 2) } else { [math]::Round($row[0], 2) }
                 }
             }
         }
         catch {
             Write-Log "  [WARN] Monthly cost query failed: $($_.Exception.Message)" "WARN"
+        }
+
+        # ── Team Costs (by Resource Group) ──
+        $teamCosts = @()
+        try {
+            $rgBody = @{
+                type = "ActualCost"
+                timeframe = "Custom"
+                timePeriod = @{ from = $curMonthStart; to = $curMonthEnd }
+                dataset = @{
+                    granularity = "None"
+                    aggregation = @{ totalCost = @{ name = "Cost"; function = "Sum" } }
+                    grouping = @(@{ type = "Dimension"; name = "ResourceGroupName" }, @{ type = "Dimension"; name = "MeterCategory" })
+                }
+            } | ConvertTo-Json -Depth 10
+            $rgResp = Invoke-RestMethod -Uri $cmUri -Headers $hdrs -Method POST -Body $rgBody -TimeoutSec 60 -ErrorAction Stop
+            
+            $rgMap = @{}
+            foreach ($row in $rgResp.properties.rows) {
+                $rgName = $row[1]; $meter = $row[2]; $cost = [double]$row[0]
+                if ([string]::IsNullOrWhiteSpace($rgName)) { $rgName = "Unassigned" }
+                if (-not $rgMap.ContainsKey($rgName)) {
+                    $rgMap[$rgName] = @{ team = $rgName; compute = 0; storage = 0; networking = 0; databases = 0; other = 0; total = 0 }
+                }
+                $rgMap[$rgName].total += $cost
+                if ($meter -match 'Compute|Virtual Machines') { $rgMap[$rgName].compute += $cost }
+                elseif ($meter -match 'Storage') { $rgMap[$rgName].storage += $cost }
+                elseif ($meter -match 'Network|Bandwidth') { $rgMap[$rgName].networking += $cost }
+                elseif ($meter -match 'SQL|Database|Cosmos') { $rgMap[$rgName].databases += $cost }
+                else { $rgMap[$rgName].other += $cost }
+            }
+            
+            # Form array and pick top 15 RGs
+            $teamCosts = @($rgMap.Values) | Sort-Object total -Descending | Select-Object -First 15
+            foreach ($t in $teamCosts) {
+                $t.compute = [math]::Round($t.compute, 2)
+                $t.storage = [math]::Round($t.storage, 2)
+                $t.networking = [math]::Round($t.networking, 2)
+                $t.databases = [math]::Round($t.databases, 2)
+                $t.other = [math]::Round($t.other, 2)
+            }
+        } catch {
+            Write-Log "  [WARN] Team costs (RG) query failed: $($_.Exception.Message)" "WARN"
         }
 
         # ── Savings recommendations from Azure Advisor ──
@@ -780,14 +929,14 @@ foreach ($subId in $subIds) {
                 subscriptionId   = $subId
                 subscriptionName = $subName
                 currentMonth     = [math]::Round($totalCur, 2)
-                budget           = 0
-                forecast         = 0
+                budget           = [math]::Round($subBudget, 2)
+                forecast         = [math]::Round($subForecast, 2)
             })
-            teamCosts              = @()
+            teamCosts              = $teamCosts
             dailyCostData          = $dailyCostData
-            weeklyCostData         = @()
+            weeklyCostData         = $weeklyCostData
             monthlyCostData        = $monthlyCostData
-            costAnomalies          = @()
+            costAnomalies          = $costAnomalies
             savingsRecommendations = $savingsRecs
         }
 
@@ -968,9 +1117,10 @@ Resources
          subnetCount = array_length(properties.subnets),
          ddosProtection = tobool(properties.enableDdosProtection),
          dnsServers = iff(array_length(properties.dhcpOptions.dnsServers) > 0,
-                         strcat_array(properties.dhcpOptions.dnsServers, ', '), 'Azure DNS')
+                         strcat_array(properties.dhcpOptions.dnsServers, ', '), 'Azure DNS'),
+         peerings = properties.virtualNetworkPeerings
 | project id, name, resourceGroup, subscriptionId, location,
-          addressSpace, subnetCount, ddosProtection, dnsServers, tags
+          addressSpace, subnetCount, ddosProtection, dnsServers, peerings, tags
 "@
 
     $vnetRows = @(); $vnSkip = $null
@@ -1075,7 +1225,7 @@ Resources
                     region          = $row.location
                     addressSpace    = if ($row.addressSpace) { $row.addressSpace } else { '' }
                     subnetCount     = if ($row.subnetCount) { [int]$row.subnetCount } else { 0 }
-                    peeredWith      = @()
+                    peeredWith      = if ($row.peerings) { @($row.peerings | ForEach-Object { $p = $_.properties.remoteVirtualNetwork.id; if ($p) { ($p -split '/')[-1] } }) } else { @() }
                     dnsServers      = if ($row.dnsServers) { $row.dnsServers } else { 'Azure DNS' }
                     ddosProtection  = [bool]$row.ddosProtection
                     tags            = if ($null -ne $row.tags) { $row.tags } else { @{} }
@@ -1087,6 +1237,28 @@ Resources
         $ng = $nsgBySub | Where-Object { $_.Name -eq $subId }
         if ($ng) {
             foreach ($row in $ng.Group) {
+                $highRiskPorts = @()
+                $defaultDeny = $false
+                if ($row.secRules) {
+                    foreach ($rule in $row.secRules) {
+                        $props = $rule.properties
+                        if ($props.access -eq 'Allow' -and $props.direction -eq 'Inbound') {
+                            $ports = @()
+                            if ($props.destinationPortRange) { $ports += $props.destinationPortRange }
+                            if ($props.destinationPortRanges) { foreach ($p in $props.destinationPortRanges) { $ports += $p } }
+                            if ($props.sourceAddressPrefix -in @('*', 'Internet', '0.0.0.0/0')) {
+                                foreach ($p in $ports) {
+                                    if ($p -match '22|3389|\*') { $highRiskPorts += $p }
+                                }
+                            }
+                        }
+                        if ($props.access -eq 'Deny' -and $props.direction -eq 'Inbound' -and ($props.priority -ge 4000 -or $rule.name -match 'DenyAll')) {
+                            $defaultDeny = $true
+                        }
+                    }
+                }
+                $highRiskPorts = @($highRiskPorts | Select-Object -Unique)
+
                 $nsgs += [ordered]@{
                     id              = $row.id
                     name            = $row.name
@@ -1097,8 +1269,8 @@ Resources
                     denyRules       = 0
                     subnetsAttached = if ($row.subnetCount) { [int]$row.subnetCount } else { 0 }
                     nicsAttached    = if ($row.nicCount) { [int]$row.nicCount } else { 0 }
-                    highRiskPorts   = @()
-                    defaultDeny     = $false
+                    highRiskPorts   = $highRiskPorts
+                    defaultDeny     = $defaultDeny
                 }
             }
         }
@@ -1242,7 +1414,7 @@ try {
                     }
                 }
             } catch {
-                Write-Log "  [WARN] ARM REST API fallback failed for sub $s: $($_.Exception.Message)" "WARN"
+                Write-Log "  [WARN] ARM REST API fallback failed for sub $($s): $($_.Exception.Message)" "WARN"
             }
             
             $defDataObj = [ordered]@{ runDate = $today; recommendations = $apiRecs }
@@ -1258,6 +1430,94 @@ try {
 }
 catch {
     Write-Log "Failed to collect Defender Recommendations data: $_" "ERROR"
+}
+
+# ───────────────────────────────────────────────────────────────────────────────
+# PART 5b: SYNCHRONIZE TRENDS HISTORY (Copy latest ZT, Policy, Governance)
+# ───────────────────────────────────────────────────────────────────────────────
+Write-Log "--- PART 5b: Synchronizing Trends History ---"
+try {
+    foreach ($s in $subIds) {
+        if ([string]::IsNullOrWhiteSpace($s)) { continue }
+        
+        $filesToSync = @("zero-trust.json", "policy-compliance.json", "governance.json")
+        foreach ($file in $filesToSync) {
+            $latestFile = "assessments/$targetTenantId/$s/latest/$file"
+            $todayFile  = "assessments/$targetTenantId/$s/$today/$file"
+            
+            $data = Download-JsonBlob -BlobPath $latestFile -Container $containerName
+            if ($null -ne $data) {
+                # Update the runDate to today so trends graphs align perfectly
+                if ($data.psobject.properties.match('runDate').Count -gt 0) {
+                    $data.runDate = $today
+                }
+                Upload-JsonBlob -BlobPath $todayFile -Data $data -Container $containerName
+            }
+        }
+    }
+} catch {
+    Write-Log "Failed to synchronize trends history: $_" "WARN"
+}
+
+# ───────────────────────────────────────────────────────────────────────────────
+# PART 6: TENANT INDEX (For FinOps & Trends Date Navigation)
+# ───────────────────────────────────────────────────────────────────────────────
+Write-Log "--- PART 6: Building tenant-index.json ---"
+try {
+    $tenantIndex = [ordered]@{
+        tenants = @(
+            [ordered]@{
+                id   = $targetTenantId
+                name = "Verified Tenant"
+                subscriptions = @(
+                    $allSubs | ForEach-Object {
+                        [ordered]@{
+                            id             = $_.Id
+                            name           = $_.Name
+                            resourceGroups = @()
+                            dates          = @($today)
+                        }
+                    }
+                )
+            }
+        )
+    }
+
+    $indexBlobPath = "assessments/tenant-index.json"
+    $existingRaw   = Download-JsonBlob -BlobPath $indexBlobPath -Container $containerName
+
+    if ($existingRaw -and $existingRaw.tenants) {
+        foreach ($newTenant in $tenantIndex.tenants) {
+            $oldTenant = $existingRaw.tenants | Where-Object { $_.id -eq $newTenant.id } | Select-Object -First 1
+            if ($oldTenant) {
+                # Preserve the original tenant name if available
+                if ($oldTenant.name -and $oldTenant.name -ne "Unknown" -and $oldTenant.name -ne "Verified Tenant") {
+                    $newTenant.name = $oldTenant.name
+                }
+                
+                foreach ($newSub in $newTenant.subscriptions) {
+                    $oldSub = $oldTenant.subscriptions | Where-Object { $_.id -eq $newSub.id } | Select-Object -First 1
+                    if ($oldSub -and $oldSub.dates) {
+                        $merged = @($oldSub.dates) + @($today) | Sort-Object -Unique | Select-Object -Last 90
+                        $newSub.dates = @($merged)
+                    }
+                }
+                $newSubIds  = @($newTenant.subscriptions | ForEach-Object { $_.id })
+                $oldSubObjs = @($oldTenant.subscriptions)
+                foreach ($oldSub in $oldSubObjs) {
+                    if ($newSubIds -notcontains $oldSub.id) {
+                        $newTenant.subscriptions += $oldSub
+                    }
+                }
+            }
+        }
+    }
+
+    Upload-JsonBlob -BlobPath $indexBlobPath -Data $tenantIndex -Container $containerName
+    Write-Log "Successfully updated tenant-index.json."
+
+} catch {
+    Write-Log "Failed to build tenant-index.json: $_" "ERROR"
 }
 
 Write-Log "=== Unified Verification Runbook Complete ==="
