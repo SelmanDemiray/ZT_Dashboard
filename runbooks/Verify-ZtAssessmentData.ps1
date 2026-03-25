@@ -1447,6 +1447,13 @@ try {
                             }
                         }
                         
+                        $hasAttackPathVal = $false
+                        try { if ($props.additionalData.hasAttackPaths) { $hasAttackPathVal = [bool]$props.additionalData.hasAttackPaths } } catch {}
+                        $remediationVal = ""
+                        try { $remediationVal = [string]$meta.remediationDescription } catch {}
+                        $learnMoreUrlVal = ""
+                        try { $learnMoreUrlVal = [string]$meta.customAssurance } catch {}
+                        
                         $apiRecs += [ordered]@{
                             id                     = $first.name
                             name                   = $recName
@@ -1455,10 +1462,10 @@ try {
                             category               = $category
                             subscriptionId         = $s
                             resourceCount          = $grp.Group.Count
-                            hasAttackPath          = $false; try { if ($props.additionalData.hasAttackPaths) { $hasAttackPath = [bool]$props.additionalData.hasAttackPaths } } catch {}
+                            hasAttackPath          = $hasAttackPathVal
                             affectedResources      = $affected
-                            remediation            = ""; try { $remediation = $meta.remediationDescription } catch {}
-                            learnMoreUrl           = ""; try { $learnMoreUrl = $meta.customAssurance } catch {}
+                            remediation            = $remediationVal
+                            learnMoreUrl           = $learnMoreUrlVal
                             governanceAssignmentId = ""
                         }
                     }
