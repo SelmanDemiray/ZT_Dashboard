@@ -172,40 +172,23 @@ export function GlobalFilterProvider({ children }: { children: ReactNode }) {
     const availableTenants = useMemo(() => tenantIndex?.tenants ?? [], [tenantIndex]);
 
     const availableSubscriptions = useMemo(() => {
-        let subs = availableTenants.find((t) => t.id === filters.tenantId)?.subscriptions ?? [];
-        
-        const applyGroupFilter = (groupId: string, sourceGroups: any[]) => {
-            if (!groupId) return;
-            const group = sourceGroups.find(g => g.id === groupId);
-            if (group && group.subscriptions && group.subscriptions.length > 0) {
-                subs = subs.filter(s => group.subscriptions!.includes(s.id));
-            }
-        };
-
-        applyGroupFilter(filters.operationalArea, settings.operationalAreas);
-        applyGroupFilter(filters.team, settings.teams);
-        applyGroupFilter(filters.keyword, settings.keywords);
-
-        return subs;
-    }, [availableTenants, filters.tenantId, filters.operationalArea, filters.team, filters.keyword, settings]);
+        // Tenant-wide subscription scope should not be reduced by Area/Team/Keyword selectors.
+        // Those selectors filter *tests* (see `filteredTests`), not the subscription list itself.
+        return availableTenants.find((t) => t.id === filters.tenantId)?.subscriptions ?? [];
+    }, [availableTenants, filters.tenantId]);
 
     const availableResourceGroups = useMemo(() => {
-        let rgs = availableSubscriptions.find((s) => s.id === filters.subscriptionId)?.resourceGroups ?? [];
-        
-        const applyGroupFilter = (groupId: string, sourceGroups: any[]) => {
-            if (!groupId) return;
-            const group = sourceGroups.find(g => g.id === groupId);
-            if (group && group.resourceGroups && group.resourceGroups.length > 0) {
-                rgs = rgs.filter(rg => group.resourceGroups!.includes(rg));
-            }
-        };
+        // When "All subscriptions" is selected, show resource groups across the whole tenant scope.
+        if (!filters.subscriptionId) {
+            return Array.from(
+                new Set(
+                    availableSubscriptions.flatMap((s) => s.resourceGroups ?? [])
+                )
+            ).sort();
+        }
 
-        applyGroupFilter(filters.operationalArea, settings.operationalAreas);
-        applyGroupFilter(filters.team, settings.teams);
-        applyGroupFilter(filters.keyword, settings.keywords);
-
-        return rgs;
-    }, [availableSubscriptions, filters.subscriptionId, filters.operationalArea, filters.team, filters.keyword, settings]);
+        return availableSubscriptions.find((s) => s.id === filters.subscriptionId)?.resourceGroups ?? [];
+    }, [availableSubscriptions, filters.subscriptionId]);
 
     const availableDates = useMemo(() => 
         filters.subscriptionId

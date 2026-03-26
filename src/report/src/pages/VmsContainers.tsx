@@ -48,7 +48,7 @@ export default function VmsContainers() {
     const [allAks, setAllAks] = React.useState<AksCluster[]>([]);
 
     React.useEffect(() => {
-        if (!filters.tenantId || availableSubscriptions.length === 0 || availableDates.length === 0) {
+        if (!filters.tenantId || availableSubscriptions.length === 0) {
             setAllVms([]); setAllAks([]); return;
         }
         let cancelled = false;

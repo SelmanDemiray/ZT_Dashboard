@@ -45,7 +45,7 @@ export function OverviewCards() {
 
     // Fetch data for all subscriptions so each card can pick its own
     useEffect(() => {
-        if (!filters.tenantId || availableSubscriptions.length === 0 || availableDates.length === 0) {
+        if (!filters.tenantId || availableSubscriptions.length === 0) {
             setSubDataMap({});
             setLoading(false);
             return;

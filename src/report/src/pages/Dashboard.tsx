@@ -44,7 +44,7 @@ export default function Dashboard() {
     const { reportData, filteredTests, availableTenants, availableSubscriptions, availableDates, filters, dispatch } = useGlobalFilters();
 
     React.useEffect(() => {
-        if (!filters.tenantId || availableSubscriptions.length === 0 || availableDates.length === 0) {
+        if (!filters.tenantId || availableSubscriptions.length === 0) {
             setTotalVms(0); setTotalAks(0); setTotalStorage(0); setTotalVnets(0); setMonthlyCost(0);
             setLoadingMetrics(false);
             return;

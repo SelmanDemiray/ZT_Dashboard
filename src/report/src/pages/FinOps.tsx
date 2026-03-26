@@ -52,7 +52,7 @@ export default function FinOps() {
     const [loading, setLoading] = React.useState(true);
 
     React.useEffect(() => {
-        if (!filters.tenantId || availableSubscriptions.length === 0 || availableDates.length === 0) {
+        if (!filters.tenantId || availableSubscriptions.length === 0) {
             setLoading(false);
             return;
         }

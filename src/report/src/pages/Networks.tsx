@@ -36,7 +36,7 @@ export default function Networks() {
     const [allLbs, setAllLbs] = React.useState<LoadBalancer[]>([]);
 
     React.useEffect(() => {
-        if (!filters.tenantId || availableSubscriptions.length === 0 || availableDates.length === 0) {
+        if (!filters.tenantId || availableSubscriptions.length === 0) {
             setAllVnets([]); setAllNsgs([]); setAllFws([]); setAllLbs([]); return;
         }
         let cancelled = false;

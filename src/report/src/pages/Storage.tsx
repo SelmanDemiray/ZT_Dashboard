@@ -68,7 +68,7 @@ export default function Storage() {
     const [costTrendData, setCostTrendData] = React.useState<{ month: string; cost: number; egress: number }[]>([]);
 
     React.useEffect(() => {
-        if (!filters.tenantId || availableSubscriptions.length === 0 || availableDates.length === 0) {
+        if (!filters.tenantId || availableSubscriptions.length === 0) {
             setStorageAccounts([]);
             setCostTrendData([]);
             setLoading(false);
