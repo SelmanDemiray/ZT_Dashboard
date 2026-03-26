@@ -189,21 +189,34 @@ function Invoke-WithRetry {
     while ($true) {
         try {
             return & $Action
-            break
         } catch {
             $msg = $_.Exception.Message
-            $is429 = (($msg -match '429|Too Many Requests') -or ($null -ne $_.Exception.Response -and [int]$_.Exception.Response.StatusCode -eq 429))
+            # Safe 429 detection — guard against null Response and StatusCode access failures
+            $is429 = $false
+            if ($msg -match '429|Too Many Requests') { $is429 = $true }
+            try {
+                if (-not $is429 -and $null -ne $_.Exception.Response) {
+                    $sc = $null
+                    try { $sc = [int]$_.Exception.Response.StatusCode } catch {}
+                    if ($sc -eq 429) { $is429 = $true }
+                }
+            } catch { <# ignore StatusCode access failures #> }
 
             if ($is429) {
                 if ($attempt -ge $MaxRetries) { throw }
                 
                 $sleepSecs = $attempt * $BaseSleep
-                if ($null -ne $_.Exception.Response -and $null -ne $_.Exception.Response.Headers['Retry-After']) {
-                    $retryAfter = 0
-                    if ([int]::TryParse($_.Exception.Response.Headers['Retry-After'], [ref]$retryAfter)) {
-                        if ($retryAfter -gt 0 -and $retryAfter -lt 300) { $sleepSecs = $retryAfter + 5 }
+                # Safe Retry-After header access — HttpResponseHeaders is NOT a hashtable
+                try {
+                    if ($null -ne $_.Exception.Response -and $null -ne $_.Exception.Response.Headers) {
+                        $retryAfterHeader = $null
+                        try { $retryAfterHeader = $_.Exception.Response.Headers.RetryAfter } catch {}
+                        if ($null -ne $retryAfterHeader -and $null -ne $retryAfterHeader.Delta) {
+                            $retryAfter = [int]$retryAfterHeader.Delta.TotalSeconds
+                            if ($retryAfter -gt 0 -and $retryAfter -lt 300) { $sleepSecs = $retryAfter + 5 }
+                        }
                     }
-                }
+                } catch { <# ignore header parse errors entirely #> }
 
                 Write-Log "  [WARN] Rate limit (429) hit. Retrying in $sleepSecs seconds... (Attempt $attempt/$MaxRetries)" "WARN"
                 Start-Sleep -Seconds $sleepSecs
@@ -605,7 +618,8 @@ Resources
             try {
                 $metricEnd   = [DateTime]::UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ")
                 $metricStart = [DateTime]::UtcNow.AddDays(-28).ToString("yyyy-MM-ddTHH:mm:ssZ")
-                $tsUri       = "$([uri]::EscapeDataString($metricStart))/$([uri]::EscapeDataString($metricEnd))"
+                # DO NOT uri-escape — ISO timestamps are already safe for query strings
+                $tsUri       = "$metricStart/$metricEnd"
 
                 $secToken    = Get-AzAccessToken -ResourceUrl "https://management.azure.com" -AsSecureString -ErrorAction Stop
                 $armToken    = [System.Net.NetworkCredential]::new('', $secToken.Token).Password
@@ -703,6 +717,308 @@ Resources
 }
 catch {
     Write-Log "Failed to collect storage accounts: $_" "ERROR"
+}
+
+# ───────────────────────────────────────────────────────────────────────────────
+# PART 3b: POLICY COMPLIANCE DATA COLLECTION (Azure Policy)
+# ───────────────────────────────────────────────────────────────────────────────
+Write-Log "--- PART 3b: Collecting Policy Compliance Data ---"
+try {
+    Ensure-AzSessionFresh
+    $secTok = Get-AzAccessToken -ResourceUrl "https://management.azure.com/" -AsSecureString -ErrorAction Stop
+    $armTok = [System.Net.NetworkCredential]::new('', $secTok.Token).Password
+    $policyHeaders = @{ Authorization = "Bearer $armTok" }
+
+    foreach ($subId in $subIds) {
+        if ([string]::IsNullOrWhiteSpace($subId)) { continue }
+        $subName = ($allSubs | Where-Object { $_.Id -eq $subId } | Select-Object -First 1).Name
+        if (-not $subName) { $subName = "Subscription $($subId.Substring(0,8))" }
+
+        $initiatives = @()
+        try {
+            # Get policy assignments for the subscription
+            $assignUri = "https://management.azure.com/subscriptions/$subId/providers/Microsoft.Authorization/policyAssignments?api-version=2022-06-01"
+            $assignResp = Invoke-RestMethod -Uri $assignUri -Headers $policyHeaders -Method GET -TimeoutSec 60 -ErrorAction Stop
+
+            foreach ($assign in $assignResp.value) {
+                $assignProps = $assign.properties
+                $defId = $assignProps.policyDefinitionId
+                $isInitiative = ($defId -match 'policySetDefinitions')
+
+                # Get compliance state for this assignment
+                $stateUri = "https://management.azure.com/subscriptions/$subId/providers/Microsoft.PolicyInsights/policyStates/latest/summarize?api-version=2019-10-01&`$filter=policyAssignmentId eq '$($assign.id)'"
+                $compliantCount = 0; $nonCompliantCount = 0; $exemptCount = 0; $totalPolicies = 1
+                $resources = @()
+
+                try {
+                    Start-Sleep -Milliseconds 500
+                    $stateResp = Invoke-RestMethod -Uri $stateUri -Headers $policyHeaders -Method POST -TimeoutSec 30 -ErrorAction Stop
+                    if ($stateResp.value -and $stateResp.value.Count -gt 0) {
+                        $summary = $stateResp.value[0].results
+                        $totalResources = 0
+                        if ($null -ne $summary) {
+                            foreach ($qr in $summary.queryResultsTable.rows) {
+                                # rows contain [complianceState, count]
+                            }
+                            # Use resourceDetails instead
+                            $compliantCount = 0; $nonCompliantCount = 0
+                            if ($summary.PSObject.Properties.Match('nonCompliantResources').Count -gt 0) {
+                                $nonCompliantCount = [int]$summary.nonCompliantResources
+                            }
+                            if ($summary.PSObject.Properties.Match('compliantResources').Count -gt 0) {
+                                $compliantCount = [int]$summary.compliantResources
+                            }
+                        }
+                        if ($isInitiative -and $stateResp.value[0].PSObject.Properties.Match('policyDefinitions').Count -gt 0) {
+                            $totalPolicies = @($stateResp.value[0].policyDefinitions).Count
+                            if ($totalPolicies -eq 0) { $totalPolicies = 1 }
+                        }
+                    }
+                } catch {
+                    Write-Log "  [WARN] Policy state query failed for assignment $($assign.name): $($_.Exception.Message)" "WARN"
+                }
+
+                # Look up display name from mapping
+                $displayName = $assignProps.displayName
+                if ([string]::IsNullOrWhiteSpace($displayName)) { $displayName = $assign.name }
+
+                $initiatives += [ordered]@{
+                    id               = $assign.name
+                    name             = $displayName
+                    type             = if ($isInitiative) { 'builtin' } else { 'custom' }
+                    assignmentId     = $assign.id
+                    subscriptionId   = $subId
+                    compliantCount   = $compliantCount
+                    nonCompliantCount = $nonCompliantCount
+                    exemptCount      = $exemptCount
+                    totalPolicies    = $totalPolicies
+                    resources        = $resources
+                }
+            }
+        } catch {
+            Write-Log "  [WARN] Policy assignments fetch failed for sub $subId : $($_.Exception.Message)" "WARN"
+        }
+
+        $policyData = [ordered]@{
+            runDate     = $today
+            initiatives = $initiatives
+        }
+
+        $blobBasePath   = "assessments/$targetTenantId/$subId/$today"
+        $blobLatestPath = "assessments/$targetTenantId/$subId/latest"
+        Upload-JsonBlob -BlobPath "$blobBasePath/policy-compliance.json"   -Data $policyData -Container $containerName
+        Upload-JsonBlob -BlobPath "$blobLatestPath/policy-compliance.json" -Data $policyData -Container $containerName
+        Write-Log "Policy compliance uploaded for sub $subId ($($initiatives.Count) assignments)."
+    }
+} catch {
+    Write-Log "Failed to collect policy compliance data: $_" "ERROR"
+}
+
+# ───────────────────────────────────────────────────────────────────────────────
+# PART 3c: ZERO TRUST POSTURE SCORE (Computed from Defender + Policy data)
+# ───────────────────────────────────────────────────────────────────────────────
+Write-Log "--- PART 3c: Computing Zero Trust Posture Scores ---"
+try {
+    Ensure-AzSessionFresh
+    $secTok = Get-AzAccessToken -ResourceUrl "https://management.azure.com/" -AsSecureString -ErrorAction Stop
+    $armTok = [System.Net.NetworkCredential]::new('', $secTok.Token).Password
+
+    foreach ($subId in $subIds) {
+        if ([string]::IsNullOrWhiteSpace($subId)) { continue }
+        $subName = ($allSubs | Where-Object { $_.Id -eq $subId } | Select-Object -First 1).Name
+
+        # Get Secure Score from Microsoft Defender for Cloud
+        $pillars = @()
+        $checks = @()
+        $overallScore = 0
+        try {
+            $ssUri = "https://management.azure.com/subscriptions/$subId/providers/Microsoft.Security/secureScores?api-version=2020-01-01"
+            $ssResp = Invoke-RestMethod -Uri $ssUri -Headers @{Authorization="Bearer $armTok"} -Method GET -TimeoutSec 30 -ErrorAction Stop
+
+            if ($ssResp.value -and $ssResp.value.Count -gt 0) {
+                $ss = $ssResp.value[0].properties
+                $currentScore = 0; $maxScore = 0
+                try { $currentScore = [double]$ss.score.current } catch {}
+                try { $maxScore = [double]$ss.score.max } catch {}
+                $overallScore = if ($maxScore -gt 0) { [math]::Round(($currentScore / $maxScore) * 100, 1) } else { 0 }
+            }
+
+            # Get Secure Score controls for pillar breakdown
+            $ctrlUri = "https://management.azure.com/subscriptions/$subId/providers/Microsoft.Security/secureScores/ascScore/secureScoreControls?api-version=2020-01-01&`$expand=definition"
+            $ctrlResp = Invoke-RestMethod -Uri $ctrlUri -Headers @{Authorization="Bearer $armTok"} -Method GET -TimeoutSec 30 -ErrorAction Stop
+
+            if ($ctrlResp.value) {
+                # Group controls into ZT pillars
+                $pillarMap = @{
+                    'Identity'    = @('Manage access and permissions', 'Enable MFA', 'Secure management ports', 'Apply adaptive application control', 'Enable endpoint protection')
+                    'Devices'     = @('Apply system updates', 'Remediate vulnerabilities', 'Enable endpoint protection', 'Install endpoint protection')
+                    'Network'     = @('Restrict unauthorized network access', 'Protect applications against DDoS attacks', 'Enable endpoint protection')
+                    'Data'        = @('Apply data classification', 'Encrypt data in transit', 'Enable auditing and logging')
+                    'Applications' = @('Remediate security configurations', 'Apply adaptive application control')
+                    'Infrastructure' = @('Remediate vulnerabilities', 'Apply system updates', 'Remediate security configurations')
+                }
+                $pillarScores = @{}
+                foreach ($pillar in $pillarMap.Keys) {
+                    $pillarScores[$pillar] = @{ passed = 0; total = 0; score = 0 }
+                }
+
+                foreach ($ctrl in $ctrlResp.value) {
+                    $ctrlProps = $ctrl.properties
+                    $ctrlName = ''
+                    try { $ctrlName = $ctrlProps.displayName } catch {}
+                    if ([string]::IsNullOrWhiteSpace($ctrlName)) {
+                        try { $ctrlName = $ctrl.name } catch { $ctrlName = 'Unknown' }
+                    }
+                    $healthy = 0; $unhealthy = 0; $notApplicable = 0
+                    try { $healthy = [int]$ctrlProps.healthyResourceCount } catch {}
+                    try { $unhealthy = [int]$ctrlProps.unhealthyResourceCount } catch {}
+                    try { $notApplicable = [int]$ctrlProps.notApplicableResourceCount } catch {}
+                    $total = $healthy + $unhealthy
+
+                    # Determine status
+                    $status = if ($unhealthy -eq 0 -and $total -gt 0) { 'passed' }
+                              elseif ($unhealthy -gt 0) { 'failed' }
+                              else { 'notApplicable' }
+
+                    $ctrlScore = 0
+                    try { $ctrlScore = [double]$ctrlProps.score.current } catch {}
+                    $ctrlMaxScore = 0
+                    try { $ctrlMaxScore = [double]$ctrlProps.score.max } catch {}
+
+                    # Assign to ZT pillars
+                    $assignedPillar = 'Infrastructure'
+                    foreach ($pillar in $pillarMap.Keys) {
+                        foreach ($keyword in $pillarMap[$pillar]) {
+                            if ($ctrlName -match [regex]::Escape($keyword)) {
+                                $assignedPillar = $pillar
+                                break
+                            }
+                        }
+                    }
+
+                    if (-not $pillarScores.ContainsKey($assignedPillar)) {
+                        $pillarScores[$assignedPillar] = @{ passed = 0; total = 0; score = 0 }
+                    }
+                    $pillarScores[$assignedPillar].total++
+                    if ($status -eq 'passed') { $pillarScores[$assignedPillar].passed++ }
+
+                    $checks += [ordered]@{
+                        id          = $ctrl.name
+                        name        = $ctrlName
+                        pillar      = $assignedPillar
+                        area        = $assignedPillar
+                        status      = $status
+                        risk        = if ($unhealthy -gt 5) { 'high' } elseif ($unhealthy -gt 0) { 'medium' } else { 'low' }
+                        description = "$ctrlName - $healthy healthy, $unhealthy unhealthy resources"
+                        remediation = ''
+                        learnMoreUrl = ''
+                        score       = $ctrlScore
+                        weight      = $ctrlMaxScore
+                    }
+                }
+
+                foreach ($pillar in $pillarScores.Keys) {
+                    $ps = $pillarScores[$pillar]
+                    $pScore = if ($ps.total -gt 0) { [math]::Round(($ps.passed / $ps.total) * 100, 1) } else { 0 }
+                    $pillars += [ordered]@{
+                        name        = $pillar
+                        score       = $pScore
+                        totalChecks = $ps.total
+                        passed      = $ps.passed
+                        failed      = $ps.total - $ps.passed
+                    }
+                }
+            }
+        } catch {
+            Write-Log "  [WARN] Secure score fetch failed for sub $subId : $($_.Exception.Message)" "WARN"
+        }
+
+        $ztData = [ordered]@{
+            tenantId    = $targetTenantId
+            tenantName  = if ($subName) { $subName } else { 'Tenant' }
+            runDate     = $today
+            overallScore = $overallScore
+            pillars     = $pillars
+            checks      = $checks
+        }
+
+        $blobBasePath   = "assessments/$targetTenantId/$subId/$today"
+        $blobLatestPath = "assessments/$targetTenantId/$subId/latest"
+        Upload-JsonBlob -BlobPath "$blobBasePath/zero-trust.json"   -Data $ztData -Container $containerName
+        Upload-JsonBlob -BlobPath "$blobLatestPath/zero-trust.json" -Data $ztData -Container $containerName
+        Write-Log "Zero Trust scores uploaded for sub $subId (overall: $overallScore%, $($pillars.Count) pillars, $($checks.Count) checks)."
+    }
+} catch {
+    Write-Log "Failed to compute Zero Trust posture: $_" "ERROR"
+}
+
+# ───────────────────────────────────────────────────────────────────────────────
+# PART 3d: GOVERNANCE ASSIGNMENTS COLLECTION
+# ───────────────────────────────────────────────────────────────────────────────
+Write-Log "--- PART 3d: Collecting Governance Data ---"
+try {
+    Ensure-AzSessionFresh
+    $secTok = Get-AzAccessToken -ResourceUrl "https://management.azure.com/" -AsSecureString -ErrorAction Stop
+    $armTok = [System.Net.NetworkCredential]::new('', $secTok.Token).Password
+
+    foreach ($subId in $subIds) {
+        if ([string]::IsNullOrWhiteSpace($subId)) { continue }
+
+        $govRules = @()
+        try {
+            # Try governance rules API (Defender for Cloud)
+            $govUri = "https://management.azure.com/subscriptions/$subId/providers/Microsoft.Security/governanceRules?api-version=2022-01-01-preview"
+            $govResp = Invoke-RestMethod -Uri $govUri -Headers @{Authorization="Bearer $armTok"} -Method GET -TimeoutSec 30 -ErrorAction SilentlyContinue
+
+            if ($govResp.value) {
+                foreach ($rule in $govResp.value) {
+                    $rProps = $rule.properties
+                    $ownerEmail = ''
+                    $owner = ''
+                    try {
+                        if ($rProps.ownerSource) {
+                            $owner = if ($rProps.ownerSource.value) { $rProps.ownerSource.value } else { 'Unassigned' }
+                        }
+                    } catch { $owner = 'Unassigned' }
+
+                    $dueDate = ''
+                    try {
+                        if ($rProps.remediationTimeframe) { $dueDate = $rProps.remediationTimeframe }
+                    } catch {}
+
+                    $govRules += [ordered]@{
+                        id                       = $rule.name
+                        name                     = if ($rProps.displayName) { $rProps.displayName } else { $rule.name }
+                        owner                    = $owner
+                        ownerEmail               = $ownerEmail
+                        dueDate                  = $dueDate
+                        subscriptionId           = $subId
+                        status                   = 'inProgress'
+                        completionPercentage     = 0
+                        linkedRecommendationIds  = @()
+                        linkedPolicyIds          = @()
+                        description              = if ($rProps.description) { $rProps.description } else { '' }
+                        completionCriteria       = @()
+                    }
+                }
+            }
+        } catch {
+            Write-Log "  [WARN] Governance rules fetch failed for sub $subId : $($_.Exception.Message)" "WARN"
+        }
+
+        $govData = [ordered]@{
+            runDate = $today
+            rules   = $govRules
+        }
+
+        $blobBasePath   = "assessments/$targetTenantId/$subId/$today"
+        $blobLatestPath = "assessments/$targetTenantId/$subId/latest"
+        Upload-JsonBlob -BlobPath "$blobBasePath/governance.json"   -Data $govData -Container $containerName
+        Upload-JsonBlob -BlobPath "$blobLatestPath/governance.json" -Data $govData -Container $containerName
+        Write-Log "Governance data uploaded for sub $subId ($($govRules.Count) rules)."
+    }
+} catch {
+    Write-Log "Failed to collect governance data: $_" "ERROR"
 }
 
 # ───────────────────────────────────────────────────────────────────────────────
@@ -1413,88 +1729,76 @@ try {
         $blobLatestPath = "assessments/$targetTenantId/$s/latest/defender-recs.json"
         $blobBasePath   = "assessments/$targetTenantId/$s/$today/defender-recs.json"
 
-        Write-Log "Checking $blobLatestPath for missing Defender recommendations..."
-        $existingData = Download-JsonBlob -BlobPath $blobLatestPath -Container $containerName
-        
-        $isEmpty = $false
-        if ($null -eq $existingData -or $null -eq $existingData.recommendations) {
-            $isEmpty = $true
-        } elseif ($existingData.recommendations -is [System.Array] -or $existingData.recommendations -is [System.Collections.ICollection]) {
-            if ($existingData.recommendations.Count -eq 0) { $isEmpty = $true }
-        }
-
-        if ($isEmpty) {
-            Write-Log "  Missing or empty recommendations for sub $s. Grabbing data via assigned API permissions (REST API)..."
-            $apiRecs = @()
-            try {
-                $apiUrl = "https://management.azure.com/subscriptions/$s/providers/Microsoft.Security/assessments?api-version=2020-01-01"
-                $apiResp = Invoke-RestMethod -Uri $apiUrl -Headers @{ Authorization = "Bearer $armTok" } -Method GET -TimeoutSec 30 -ErrorAction Stop
+        Write-Log "  Collecting Defender recommendations for sub $s via REST API..."
+        $apiRecs = @()
+        try {
+            $apiUrl = "https://management.azure.com/subscriptions/$s/providers/Microsoft.Security/assessments?api-version=2020-01-01"
+            $apiResp = Invoke-WithRetry { Invoke-RestMethod -Uri $apiUrl -Headers @{ Authorization = "Bearer $armTok" } -Method GET -TimeoutSec 60 -ErrorAction Stop }
+            
+            if ($apiResp.value) {
+                $unhealthy = @($apiResp.value | Where-Object { $_.properties.status.code -eq 'Unhealthy' })
+                Write-Log "  Found $($unhealthy.Count) unhealthy recommendations for sub $s."
                 
-                if ($apiResp.value) {
-                    $unhealthy = @($apiResp.value | Where-Object { $_.properties.status.code -eq 'Unhealthy' })
-                    Write-Log "  Found $($unhealthy.Count) unhealthy recommendations."
+                $apiGrouped = $unhealthy | Group-Object -Property name
+                foreach ($grp in $apiGrouped) {
+                    $first = $grp.Group[0]
+                    $props = $first.properties
+                    $meta = $null; try { $meta = $props.metadata } catch {}
+                    $severity = "low"; try { $severity = $meta.severity.ToString().ToLower() } catch {}
+                    $category = "Compute"; try { if ($meta.categories.Count -gt 0) { $category = $meta.categories[0] } } catch {}
                     
-                    $apiGrouped = $unhealthy | Group-Object -Property name
-                    foreach ($grp in $apiGrouped) {
-                        $first = $grp.Group[0]
-                        $props = $first.properties
-                        $meta = $null; try { $meta = $props.metadata } catch {}
-                        $severity = "low"; try { $severity = $meta.severity.ToString().ToLower() } catch {}
-                        $category = "Compute"; try { if ($meta.categories.Count -gt 0) { $category = $meta.categories[0] } } catch {}
+                    $recName  = if ($props.PSObject.Properties.Match('displayName').Count -gt 0) { $props.displayName } else { $first.name }
+                    
+                    $affected = @()
+                    foreach ($row in $grp.Group) {
+                        $resDetails = if ($row.properties.PSObject.Properties.Match('resourceDetails').Count -gt 0) { $row.properties.resourceDetails } else { $null }
+                        $resId = if ($resDetails -and $resDetails.PSObject.Properties.Match('Id').Count -gt 0) { $resDetails.Id } else { "" }
+                        $resName = if ($resId) { ($resId -split '/')[-1] } else { "Unknown" }
+                        $resType = "Unknown"
+                        if ($resId -match '/providers/([^/]+/[^/]+)/') { $resType = $Matches[1] }
                         
-                        $recName  = if ($props.PSObject.Properties.Match('displayName').Count -gt 0) { $props.displayName } else { $first.name }
-                        
-                        $affected = @()
-                        foreach ($row in $grp.Group) {
-                            $resDetails = if ($row.properties.PSObject.Properties.Match('resourceDetails').Count -gt 0) { $row.properties.resourceDetails } else { $null }
-                            $resId = if ($resDetails -and $resDetails.PSObject.Properties.Match('Id').Count -gt 0) { $resDetails.Id } else { "" }
-                            $resName = if ($resId) { ($resId -split '/')[-1] } else { "Unknown" }
-                            $resType = "Unknown"
-                            if ($resId -match '/providers/([^/]+/[^/]+)/') { $resType = $Matches[1] }
-                            
-                            $affected += [ordered]@{
-                                id            = $resId
-                                name          = $resName
-                                type          = $resType
-                                resourceGroup = ""
-                            }
-                        }
-                        
-                        $hasAttackPathVal = $false
-                        try { if ($props.additionalData.hasAttackPaths) { $hasAttackPathVal = [bool]$props.additionalData.hasAttackPaths } } catch {}
-                        $remediationVal = ""
-                        try { $remediationVal = [string]$meta.remediationDescription } catch {}
-                        $learnMoreUrlVal = ""
-                        try { $learnMoreUrlVal = [string]$meta.customAssurance } catch {}
-                        
-                        $apiRecs += [ordered]@{
-                            id                     = $first.name
-                            name                   = $recName
-                            description            = if ($meta -and $meta.PSObject.Properties.Match('description').Count -gt 0) { $meta.description } else { "" }
-                            severity               = $severity
-                            category               = $category
-                            subscriptionId         = $s
-                            resourceCount          = $grp.Group.Count
-                            hasAttackPath          = $hasAttackPathVal
-                            affectedResources      = $affected
-                            remediation            = $remediationVal
-                            learnMoreUrl           = $learnMoreUrlVal
-                            governanceAssignmentId = ""
+                        $affected += [ordered]@{
+                            id            = $resId
+                            name          = $resName
+                            type          = $resType
+                            resourceGroup = ""
                         }
                     }
+                    
+                    $hasAttackPathVal = $false
+                    try { if ($props.additionalData.hasAttackPaths) { $hasAttackPathVal = [bool]$props.additionalData.hasAttackPaths } } catch {}
+                    $remediationVal = ""
+                    try { $remediationVal = [string]$meta.remediationDescription } catch {}
+                    $learnMoreUrlVal = ""
+                    try { $learnMoreUrlVal = [string]$meta.customAssurance } catch {}
+                    
+                    $apiRecs += [ordered]@{
+                        id                     = $first.name
+                        name                   = $recName
+                        description            = if ($meta -and $meta.PSObject.Properties.Match('description').Count -gt 0) { $meta.description } else { "" }
+                        severity               = $severity
+                        category               = $category
+                        subscriptionId         = $s
+                        resourceCount          = $grp.Group.Count
+                        hasAttackPath          = $hasAttackPathVal
+                        affectedResources      = $affected
+                        remediation            = $remediationVal
+                        learnMoreUrl           = $learnMoreUrlVal
+                        governanceAssignmentId = ""
+                    }
                 }
-            } catch {
-                Write-Log "  [WARN] ARM REST API fallback failed for sub $($s): $($_.Exception.Message)" "WARN"
             }
-            
-            $defDataObj = [ordered]@{ runDate = $today; recommendations = $apiRecs }
-            try {
-                Upload-JsonBlob -BlobPath $blobBasePath   -Data $defDataObj -Container $containerName
-                Upload-JsonBlob -BlobPath $blobLatestPath -Data $defDataObj -Container $containerName
-                if ($apiRecs.Count -gt 0) {
-                    Write-Log "Defender Recommendations uploaded for sub $s ($($apiRecs.Count) distinct recs via API fallback)."
-                }
-            } catch {}
+        } catch {
+            Write-Log "  [WARN] Defender assessments API failed for sub $($s): $($_.Exception.Message)" "WARN"
+        }
+        
+        $defDataObj = [ordered]@{ runDate = $today; recommendations = $apiRecs }
+        try {
+            Upload-JsonBlob -BlobPath $blobBasePath   -Data $defDataObj -Container $containerName
+            Upload-JsonBlob -BlobPath $blobLatestPath -Data $defDataObj -Container $containerName
+            Write-Log "Defender recs uploaded for sub $s ($($apiRecs.Count) recs)."
+        } catch {
+            Write-Log "  [WARN] Failed to upload Defender recs for sub $($s) - $($_.Exception.Message)" "WARN"
         }
     }
 }
