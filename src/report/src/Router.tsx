@@ -1,6 +1,7 @@
 import { createHashRouter } from "react-router-dom";
 
 import { Applayout } from "./components/layouts/AppLayout";
+import { AuthWrapper } from "./components/AuthWrapper";
 
 import { lazy } from "react";
 
@@ -16,7 +17,11 @@ const Settings = lazy(() => import("./pages/Settings"));
 export const router = createHashRouter([
     {
         path: "/",
-        element: <Applayout />,
+        element: (
+            <AuthWrapper>
+                <Applayout />
+            </AuthWrapper>
+        ),
         children: [
             {
                 path: "",

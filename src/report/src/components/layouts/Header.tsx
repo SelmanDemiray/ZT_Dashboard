@@ -1,5 +1,6 @@
 import React, { useState } from "react";
 import { NavLink, useLocation } from "react-router-dom";
+import { useMsal } from "@azure/msal-react";
 import { cn } from "@/lib/utils";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 import { Icons } from "@/components/icons";
@@ -28,6 +29,13 @@ export const Header = React.memo(function Header() {
     const [open, setOpen] = useState(false)
     const location = useLocation();
     const { reportData } = useGlobalFilters();
+    const { instance, accounts } = useMsal();
+    
+    const handleLogout = () => {
+        instance.logoutRedirect({
+            postLogoutRedirectUri: "/",
+        });
+    };
     return (
         <header className="supports-backdrop-blur:bg-background/60 sticky top-0 z-50 w-full border-b bg-background/90 backdrop-blur">
             <div className="container px-4 md:px-8 flex h-14 items-center">
@@ -189,6 +197,31 @@ export const Header = React.memo(function Header() {
                                 <span className="sr-only">GitHub</span>
                             </div>
                         </a>
+                    </nav>
+                    <nav aria-label="User profile menu" className="flex items-center space-x-2 mr-2">
+                        {accounts.length > 0 && (
+                            <DropdownMenu>
+                                <DropdownMenuTrigger asChild>
+                                    <Button variant='ghost' className='relative h-8'>
+                                        {accounts[0].name || accounts[0].username}
+                                    </Button>
+                                </DropdownMenuTrigger>
+                                <DropdownMenuContent className='w-56' align='end' forceMount>
+                                    <DropdownMenuLabel className='font-normal'>
+                                        <div className='flex flex-col space-y-1'>
+                                            <p className='text-sm font-medium leading-none'>{accounts[0].name}</p>
+                                            <p className='text-xs leading-none text-muted-foreground'>
+                                                {accounts[0].username}
+                                            </p>
+                                        </div>
+                                    </DropdownMenuLabel>
+                                    <DropdownMenuSeparator />
+                                    <DropdownMenuItem onClick={handleLogout} className="cursor-pointer text-red-600 focus:text-red-700 focus:bg-red-100 dark:focus:bg-red-950">
+                                        Log out
+                                    </DropdownMenuItem>
+                                </DropdownMenuContent>
+                            </DropdownMenu>
+                        )}
                     </nav>
                     <nav aria-label="Tenant details menu" className="flex items-center space-x-2">
                         <DropdownMenu>
