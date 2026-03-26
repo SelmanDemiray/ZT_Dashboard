@@ -615,49 +615,66 @@ Resources
             # ── Real metrics via Azure Monitor REST API ──
             $blobCap = 0; $fileCap = 0; $tableCap = 0; $queueCap = 0
             $txn30d = 0; $egressGB = 0; $ingressGB = 0
+            # Fetch ARM token once for all metric calls on this account
+            $metricEnd   = [DateTime]::UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ")
+            $metricStart = [DateTime]::UtcNow.AddDays(-28).ToString("yyyy-MM-ddTHH:mm:ssZ")
+            $tsUri       = "$metricStart/$metricEnd"
             try {
-                $metricEnd   = [DateTime]::UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ")
-                $metricStart = [DateTime]::UtcNow.AddDays(-28).ToString("yyyy-MM-ddTHH:mm:ssZ")
-                # DO NOT uri-escape — ISO timestamps are already safe for query strings
-                $tsUri       = "$metricStart/$metricEnd"
+                $secToken = Get-AzAccessToken -ResourceUrl "https://management.azure.com" -AsSecureString -ErrorAction Stop
+                $armToken = [System.Net.NetworkCredential]::new('', $secToken.Token).Password
+            } catch {
+                $armToken = $null
+                Write-Log "  [WARN] Could not get ARM token for metrics on $($row.name): $($_.Exception.Message)" "WARN"
+            }
 
-                $secToken    = Get-AzAccessToken -ResourceUrl "https://management.azure.com" -AsSecureString -ErrorAction Stop
-                $armToken    = [System.Net.NetworkCredential]::new('', $secToken.Token).Password
-
-                # Blob capacity (latest value)
-                $capUri = "https://management.azure.com$($row.id)/blobServices/default/providers/Microsoft.Insights/metrics?api-version=2018-01-01&metricnames=BlobCapacity&timespan=$tsUri&interval=P1D&aggregation=Average"
-                $capResp = Invoke-WithRetry -Action { Invoke-RestMethod -Uri $capUri -Headers @{Authorization="Bearer $armToken"} -Method GET -TimeoutSec 30 -ErrorAction Stop }
-                if ($capResp.value -and $capResp.value[0].timeseries -and $capResp.value[0].timeseries[0].data) {
-                    $lastVal = ($capResp.value[0].timeseries[0].data | Where-Object { $null -ne $_.average } | Select-Object -Last 1).average
-                    if ($lastVal) { $blobCap = [math]::Round($lastVal / 1GB, 2) }
+            if ($armToken) {
+                # Blob capacity (latest value) — some account kinds (DataLake, etc.) don't support this
+                try {
+                    $capUri = "https://management.azure.com$($row.id)/blobServices/default/providers/Microsoft.Insights/metrics?api-version=2018-01-01&metricnames=BlobCapacity&timespan=$tsUri&interval=P1D&aggregation=Average"
+                    $capResp = Invoke-WithRetry -Action { Invoke-RestMethod -Uri $capUri -Headers @{Authorization="Bearer $armToken"} -Method GET -TimeoutSec 30 -ErrorAction Stop }
+                    if ($capResp.value -and $capResp.value[0].timeseries -and $capResp.value[0].timeseries[0].data) {
+                        $lastVal = ($capResp.value[0].timeseries[0].data | Where-Object { $null -ne $_.average } | Select-Object -Last 1).average
+                        if ($lastVal) { $blobCap = [math]::Round($lastVal / 1GB, 2) }
+                    }
+                } catch {
+                    Write-Log "  [DEBUG] BlobCapacity metric unavailable for $($row.name) (expected for some account kinds)" "DEBUG"
                 }
 
                 # Transactions (sum over 28d)
-                $txnUri = "https://management.azure.com$($row.id)/providers/Microsoft.Insights/metrics?api-version=2018-01-01&metricnames=Transactions&timespan=$tsUri&interval=P1D&aggregation=Total"
-                $txnResp = Invoke-WithRetry -Action { Invoke-RestMethod -Uri $txnUri -Headers @{Authorization="Bearer $armToken"} -Method GET -TimeoutSec 30 -ErrorAction Stop }
-                if ($txnResp.value -and $txnResp.value[0].timeseries -and $txnResp.value[0].timeseries[0].data) {
-                    $txn30d = ($txnResp.value[0].timeseries[0].data | ForEach-Object { $_.total } | Measure-Object -Sum).Sum
-                    if ($null -eq $txn30d) { $txn30d = 0 }
+                try {
+                    $txnUri = "https://management.azure.com$($row.id)/providers/Microsoft.Insights/metrics?api-version=2018-01-01&metricnames=Transactions&timespan=$tsUri&interval=P1D&aggregation=Total"
+                    $txnResp = Invoke-WithRetry -Action { Invoke-RestMethod -Uri $txnUri -Headers @{Authorization="Bearer $armToken"} -Method GET -TimeoutSec 30 -ErrorAction Stop }
+                    if ($txnResp.value -and $txnResp.value[0].timeseries -and $txnResp.value[0].timeseries[0].data) {
+                        $txn30d = ($txnResp.value[0].timeseries[0].data | ForEach-Object { $_.total } | Measure-Object -Sum).Sum
+                        if ($null -eq $txn30d) { $txn30d = 0 }
+                    }
+                } catch {
+                    Write-Log "  [DEBUG] Transactions metric unavailable for $($row.name)" "DEBUG"
                 }
 
                 # Egress (sum over 28d)
-                $egUri = "https://management.azure.com$($row.id)/providers/Microsoft.Insights/metrics?api-version=2018-01-01&metricnames=Egress&timespan=$tsUri&interval=P1D&aggregation=Total"
-                $egResp = Invoke-WithRetry -Action { Invoke-RestMethod -Uri $egUri -Headers @{Authorization="Bearer $armToken"} -Method GET -TimeoutSec 30 -ErrorAction Stop }
-                if ($egResp.value -and $egResp.value[0].timeseries -and $egResp.value[0].timeseries[0].data) {
-                    $egTotal = ($egResp.value[0].timeseries[0].data | ForEach-Object { $_.total } | Measure-Object -Sum).Sum
-                    if ($egTotal) { $egressGB = [math]::Round($egTotal / 1GB, 2) }
+                try {
+                    $egUri = "https://management.azure.com$($row.id)/providers/Microsoft.Insights/metrics?api-version=2018-01-01&metricnames=Egress&timespan=$tsUri&interval=P1D&aggregation=Total"
+                    $egResp = Invoke-WithRetry -Action { Invoke-RestMethod -Uri $egUri -Headers @{Authorization="Bearer $armToken"} -Method GET -TimeoutSec 30 -ErrorAction Stop }
+                    if ($egResp.value -and $egResp.value[0].timeseries -and $egResp.value[0].timeseries[0].data) {
+                        $egTotal = ($egResp.value[0].timeseries[0].data | ForEach-Object { $_.total } | Measure-Object -Sum).Sum
+                        if ($egTotal) { $egressGB = [math]::Round($egTotal / 1GB, 2) }
+                    }
+                } catch {
+                    Write-Log "  [DEBUG] Egress metric unavailable for $($row.name)" "DEBUG"
                 }
 
                 # Ingress (sum over 28d)
-                $igUri = "https://management.azure.com$($row.id)/providers/Microsoft.Insights/metrics?api-version=2018-01-01&metricnames=Ingress&timespan=$tsUri&interval=P1D&aggregation=Total"
-                $igResp = Invoke-WithRetry -Action { Invoke-RestMethod -Uri $igUri -Headers @{Authorization="Bearer $armToken"} -Method GET -TimeoutSec 30 -ErrorAction Stop }
-                if ($igResp.value -and $igResp.value[0].timeseries -and $igResp.value[0].timeseries[0].data) {
-                    $igTotal = ($igResp.value[0].timeseries[0].data | ForEach-Object { $_.total } | Measure-Object -Sum).Sum
-                    if ($igTotal) { $ingressGB = [math]::Round($igTotal / 1GB, 2) }
+                try {
+                    $igUri = "https://management.azure.com$($row.id)/providers/Microsoft.Insights/metrics?api-version=2018-01-01&metricnames=Ingress&timespan=$tsUri&interval=P1D&aggregation=Total"
+                    $igResp = Invoke-WithRetry -Action { Invoke-RestMethod -Uri $igUri -Headers @{Authorization="Bearer $armToken"} -Method GET -TimeoutSec 30 -ErrorAction Stop }
+                    if ($igResp.value -and $igResp.value[0].timeseries -and $igResp.value[0].timeseries[0].data) {
+                        $igTotal = ($igResp.value[0].timeseries[0].data | ForEach-Object { $_.total } | Measure-Object -Sum).Sum
+                        if ($igTotal) { $ingressGB = [math]::Round($igTotal / 1GB, 2) }
+                    }
+                } catch {
+                    Write-Log "  [DEBUG] Ingress metric unavailable for $($row.name)" "DEBUG"
                 }
-            }
-            catch {
-                Write-Log "  [WARN] Metrics fetch failed for $($row.name): $($_.Exception.Message)" "WARN"
             }
 
             $accounts += [ordered]@{
@@ -755,12 +772,7 @@ try {
                     $stateResp = Invoke-RestMethod -Uri $stateUri -Headers $policyHeaders -Method POST -TimeoutSec 30 -ErrorAction Stop
                     if ($stateResp.value -and $stateResp.value.Count -gt 0) {
                         $summary = $stateResp.value[0].results
-                        $totalResources = 0
                         if ($null -ne $summary) {
-                            foreach ($qr in $summary.queryResultsTable.rows) {
-                                # rows contain [complianceState, count]
-                            }
-                            # Use resourceDetails instead
                             $compliantCount = 0; $nonCompliantCount = 0
                             if ($summary.PSObject.Properties.Match('nonCompliantResources').Count -gt 0) {
                                 $nonCompliantCount = [int]$summary.nonCompliantResources
