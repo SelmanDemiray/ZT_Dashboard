@@ -21,6 +21,7 @@ const StorageAccountsCard = memo(_StorageAccountsCard);
 import { Skeleton } from '@/components/ui/skeleton';
 import type { RunSnapshot, TenantSubscription } from '@/types/assessment';
 import { Activity, Sparkles } from 'lucide-react';
+import { aggregateRunSnapshotsByDate, makeAllSubscription } from '@/lib/overview-aggregation';
 
 interface SubscriptionData {
     sub: TenantSubscription;
@@ -89,10 +90,37 @@ export function OverviewCards() {
     }, [filters.tenantId, availableSubscriptions, availableDates]);
 
     /* Get ZT data for the score gauge from the first subscription with data */
+    const normalizedSubId = filters.subscriptionId || 'all';
+
+    const subscriptionsWithAll = useMemo(() => {
+        if (availableSubscriptions.length === 0) return [];
+        const allSub = makeAllSubscription(availableSubscriptions, availableDates);
+        return [allSub, ...availableSubscriptions];
+    }, [availableSubscriptions, availableDates]);
+
+    const subDataMapWithAll = useMemo(() => {
+        if (!subDataMap || Object.keys(subDataMap).length === 0) return subDataMap;
+        if (availableSubscriptions.length === 0) return subDataMap;
+
+        const allSub = makeAllSubscription(availableSubscriptions, availableDates);
+        const allSnapshots = aggregateRunSnapshotsByDate(
+            availableSubscriptions.map((sub) => subDataMap[sub.id]?.allSnapshots ?? [])
+        );
+
+        const latest =
+            allSnapshots.find((s) => s.date === 'latest') ??
+            allSnapshots[allSnapshots.length - 1] ??
+            null;
+
+        return {
+            ...subDataMap,
+            all: { sub: allSub, latestSnapshot: latest, allSnapshots },
+        };
+    }, [subDataMap, availableSubscriptions, availableDates]);
+
     const ztData = useMemo(() => {
-        const targetId = filters.subscriptionId || Object.keys(subDataMap)[0];
-        return subDataMap[targetId]?.latestSnapshot?.zeroTrust ?? null;
-    }, [subDataMap, filters.subscriptionId]);
+        return subDataMapWithAll?.[normalizedSubId]?.latestSnapshot?.zeroTrust ?? null;
+    }, [subDataMapWithAll, normalizedSubId]);
 
     if (globalLoading) return null;
 
@@ -159,23 +187,26 @@ export function OverviewCards() {
                     {/* 2. Original summary cards — 3 column */}
                     <div className="grid gap-5 grid-cols-1 md:grid-cols-3 dashboard-grid-stagger">
                         <ComplianceCard
-                            subscriptions={availableSubscriptions}
-                            subDataMap={subDataMap}
-                            defaultSubId={filters.subscriptionId}
+                            key={`compliance-${normalizedSubId}`}
+                            subscriptions={subscriptionsWithAll.length > 0 ? subscriptionsWithAll : availableSubscriptions}
+                            subDataMap={subDataMapWithAll}
+                            defaultSubId={normalizedSubId}
                             expanded={cardsExpanded}
                             onToggleExpanded={handleToggleExpand}
                         />
                         <GovernanceCard
-                            subscriptions={availableSubscriptions}
-                            subDataMap={subDataMap}
-                            defaultSubId={filters.subscriptionId}
+                            key={`governance-${normalizedSubId}`}
+                            subscriptions={subscriptionsWithAll.length > 0 ? subscriptionsWithAll : availableSubscriptions}
+                            subDataMap={subDataMapWithAll}
+                            defaultSubId={normalizedSubId}
                             expanded={cardsExpanded}
                             onToggleExpanded={handleToggleExpand}
                         />
                         <DefenderCard
-                            subscriptions={availableSubscriptions}
-                            subDataMap={subDataMap}
-                            defaultSubId={filters.subscriptionId}
+                            key={`defender-${normalizedSubId}`}
+                            subscriptions={subscriptionsWithAll.length > 0 ? subscriptionsWithAll : availableSubscriptions}
+                            subDataMap={subDataMapWithAll}
+                            defaultSubId={normalizedSubId}
                             expanded={cardsExpanded}
                             onToggleExpanded={handleToggleExpand}
                         />
@@ -184,27 +215,30 @@ export function OverviewCards() {
                     {/* 3. Deep-dive section — policy explorer */}
                     <div className="grid gap-5 grid-cols-1 dashboard-grid-stagger">
                         <PolicyExplorerCard
-                            subscriptions={availableSubscriptions}
-                            subDataMap={subDataMap}
-                            defaultSubId={filters.subscriptionId}
+                            key={`policy-explorer-${normalizedSubId}`}
+                            subscriptions={subscriptionsWithAll.length > 0 ? subscriptionsWithAll : availableSubscriptions}
+                            subDataMap={subDataMapWithAll}
+                            defaultSubId={normalizedSubId}
                         />
                     </div>
 
                     {/* 4. Storage Accounts — 1 column */}
                     <div className="grid gap-5 grid-cols-1 dashboard-grid-stagger">
                         <StorageAccountsCard
+                            key={`storage-${normalizedSubId}`}
                             subscriptions={availableSubscriptions}
-                            subDataMap={subDataMap}
-                            defaultSubId={filters.subscriptionId}
+                            subDataMap={subDataMapWithAll}
+                            defaultSubId={normalizedSubId}
                         />
                     </div>
 
                     {/* 5. Trend sparklines */}
                     <div className="dashboard-stagger-single">
                         <TrendSparkCards
-                            subscriptions={availableSubscriptions}
-                            subDataMap={subDataMap}
-                            defaultSubId={filters.subscriptionId}
+                            key={`trends-${normalizedSubId}`}
+                            subscriptions={subscriptionsWithAll.length > 0 ? subscriptionsWithAll : availableSubscriptions}
+                            subDataMap={subDataMapWithAll}
+                            defaultSubId={normalizedSubId}
                         />
                     </div>
                 </>
